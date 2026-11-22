@@ -5,7 +5,7 @@
  * platform: gfx.c and announce.c are in scope. The sound is dsp/engine.c.
  *
  * Controls
- *   black keys      the six machines (KICK SNARE TOMS METAL HATS CLAP): a key picks the machine (and plays it while the
+ *   black keys      the six machines (KICK SNARE TOMS FM HATS CLAP): a key picks the machine (and plays it while the
  *                   sequencer is stopped); SEQ held + a key: the machine muted / back
  *   white keys      the picked machine's steps (the page of 16 shown): a tap turns a step on, again ACCENT, again off.
  *                   A step held: K1..K4 lock the machine's macros on it (p-locks), SELECT its condition, ALGORITHM its

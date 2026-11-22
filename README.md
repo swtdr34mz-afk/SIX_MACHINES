@@ -17,12 +17,12 @@ lights up. Turn it fast and it runs past them. Wherever a knob stands, the sound
 | **KICK** (sine, pitch sweep, click, drive, folder) | TUNE: SUB, DEEP, 808, TIGHT | PUNCH: SOFT, SYNTAKT, TECHNO, ZAP | BOOM: TIGHT, SYNTAKT, 808, DRONE | GRIT: CLEAN, WARM, RUMBLE, FOLD, DESTROY | SYNTAKT DEEP, 808 CLASSIC, WAREHOUSE, PSY ZAP |
 | **SNARE** (tuned body + noise band) | TUNE: FAT, SYNTAKT, TIGHT, PICCOLO | SNAP: BRUSH, SYNTAKT, CRACK, RIMSHOT | BODY: NOISY, SYNTAKT, FAT, TONE | RATTLE: DRY, SYNTAKT, TRAP, GATED, DIRT | SYNTAKT SD, TRAP SNARE, GATED 80S, RIMSHOT |
 | **TOMS** (bent membrane, FM skin) | TUNE: FLOOR, LOW, HIGH, TIMBAL | BEND: FLAT, SYNTAKT, DROP, SIMMONS | DECAY: SHORT, SYNTAKT, RING, BOOM | SKIN: SOFT, SYNTAKT, WOOD, METAL | SYNTAKT TOM, FLOOR BOOM, SIMMONS, WOOD BLOCK |
-| **METAL** (three FM pairs at cymbal ratios) | TUNE: LOW, MID, HIGH, SPLASH | RING: RIDE, CRASH, GONG, BELL, INDUSTRY | DECAY: CHOKE, SHORT, RIDE, CRASH, WASH | SHIMMER: DARK, SILK, SHINE, SIZZLE | FM RIDE, FM CRASH, GONG, INDUSTRIAL |
+| **FM** (an FM drum as the DrumBrute Impact's, turning into FM metal) | PITCH: SUB, LOW, MID, HIGH | MOD: 1:1, 1.41, 2:1, BELL, then the metal: RIDE, CRASH, INDUSTRY | AMOUNT: PURE, SOFT, GROWL, NOISE (in the metal: its shimmer) | DECAY: BLIP, PERC, TONE, DRONE (short ones drop in pitch: the minimal blip) | MINIMAL BLIP, FM TOM, FM RIDE, FM CRASH |
 | **HATS** (808 metal + noise) | TUNE: LOW, 808, HIGH, TINY | DECAY: TICK, CLOSED, HALF, OPEN, WASH | METAL: NOISE, SYNTAKT, 808, RING | CRISP: SOFT, CRISP, SIZZLE, HARSH | SYNTAKT HH, 808 HAT, OPEN WASH, TICK |
 | **CLAP** (hands, rim, cowbell) | TUNE: LOW, 909, 808, HIGH | SPREAD: SINGLE, TIGHT, 909, CROWD | ROOM: DRY, SHORT, ROOM, HALL | MORPH: CLAP, RIM, COWBELL | 909 CLAP, 808 CLAP, RIM CLICK, COWBELL |
 
 The macros are coupled (a high kick sweeps shorter, a high snare or tom rings shorter, the hats' and the metal's
-filters follow their pitch), and the character knobs keep the loudness even (measured).
+filters follow their pitch, the FM's short decays drop in pitch), and the character knobs keep the loudness even (measured).
 
 ## Pages
 
@@ -90,7 +90,7 @@ The white pads:
 | 5 | TAPE STOP (let go: it comes back in) | 13 | SCENE B (morph to it while held) |
 | 6 | BUILD-UP (a snare roll, a rising high-pass; let go: the drop) | 14 | BREAK (no kick) |
 | 7 | REVERB THROW | 15 | FREEZE (the delay holds its loop) |
-| 8 | DELAY THROW | 16 | DROP (from the top, with a crash) |
+| 8 | DELAY THROW | 16 | DROP (from the top, at once) |
 
 **Scenes:** SAVE stores scene B: the six machines' SOUND as they are. The SCENE knob (PERFORM page) morphs every machine
 from its sound to scene B; pad 13 jumps there while held. SAVE held 1 s forgets scene B.
@@ -99,7 +99,7 @@ from its sound to scene B; pad 13 jumps there while held. SAVE held 1 s forgets 
 
 | Control | What it does |
 | --- | --- |
-| Black keys | The six machines: KICK, SNARE, TOMS, METAL, HATS, CLAP. A key picks the machine; while the sequencer is stopped it also plays it. PERF mode: mutes |
+| Black keys | The six machines: KICK, SNARE, TOMS, FM, HATS, CLAP. A key picks the machine; while the sequencer is stopped it also plays it. PERF mode: mutes |
 | White keys | The picked machine's steps (PERF mode: the pads) |
 | K1..K4 | The page's four knobs |
 | SELECT | Tempo (60 to 200 BPM); a step held: its condition |
@@ -115,7 +115,7 @@ from its sound to scene B; pad 13 jumps there while held. SAVE held 1 s forgets 
 | REC held 1 s | Clears the picked machine's pattern |
 
 The bottom line shows the audio load (CPU %) and, should the sound ever break up, the dropouts. The machines are
-rendered on both of the FM-1's cores (TOMS, METAL, HATS and CLAP on the second); if the second core fails on a unit,
+rendered on both of the FM-1's cores (TOMS, FM, HATS and CLAP on the second); if the second core fails on a unit,
 everything runs on the first.
 
 Settings, patterns, pages and scene B save themselves a few seconds after the last change (mutes and pads are live).

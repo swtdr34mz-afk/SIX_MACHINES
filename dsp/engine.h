@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: MPL-2.0
  * Copyright (C) 2026 swtdr34mz (SIX MACHINES) */
-/* SIX MACHINES' sound engine: six drum machines (KICK, SNARE, TOMS, METAL, HATS, CLAP), a sequencer of up to 32 steps
+/* SIX MACHINES' sound engine: six drum machines (KICK, SNARE, TOMS, FM, HATS, CLAP), a sequencer of up to 32 steps
  * with a pattern per machine (accents, parameter locks, trig conditions, retrigs) and swing, each machine's own
  * saturation, envelope, LFO and mix (level, pan, reverb and delay sends), a master (compressor, warmth, tilt EQ, reverb,
  * ping-pong delay, DJ filter, a 3-band kill, a soft limiter) and the performance effects (beat repeat, tape stop,
@@ -18,12 +18,12 @@
 #define ENG_SR 44100.0f
 #define NSTEPS 32
 #define NMACHINES 6
-enum { M_KICK, M_SNARE, M_TOMS, M_METAL, M_HATS, M_CLAP };
+enum { M_KICK, M_SNARE, M_TOMS, M_FM, M_HATS, M_CLAP };
 #define NO_LOCK 255u
 
 /* a macro: its name and its sweetspot zones (centre 0..127, name), left to right. A zone name of 0 on a TARGET knob:
  * the machine's own macro names (K1..K4) */
-#define MACRO_ZONES 5
+#define MACRO_ZONES 7
 typedef struct {
     const char *name;
     uint8_t nzones;

@@ -18,7 +18,7 @@
 
 #include "toms.c"
 
-#include "metal.c"
+#include "fm.c"
 
 #include "hats.c"
 
@@ -449,12 +449,12 @@ static void render_machine(int t)
     s->peak = pk;
 }
 
-/* the second core's share: TOMS, METAL, HATS, CLAP (the first renders KICK, SNARE and the master: about even) */
+/* the second core's share: TOMS, FM, HATS, CLAP (the first renders KICK, SNARE and the master: about even) */
 static void job_machines(uint32_t arg)
 {
     (void)arg;
     render_machine(M_TOMS);
-    render_machine(M_METAL);
+    render_machine(M_FM);
     render_machine(M_HATS);
     render_machine(M_CLAP);
 }
@@ -465,10 +465,7 @@ static void sequence(uint32_t n, float sb)
     uint32_t i, t;
     for (t = 0; t < NMACHINES; t++)
         nev[t] = 0;
-    if (pads_drop) {                     /* DROP (or a build-up let go): the crash, at the block's start */
-        pads_drop = 0;
-        push_ev(M_METAL, 0, 1.0f, 0);
-    }
+    pads_drop = 0;                       /* (the drop: the restart is the sequencer's; no extra hit) */
     if (hit_req) {
         for (t = 0; t < NMACHINES; t++)
             if (hit_req >> t & 1u)
@@ -771,3 +768,18 @@ void eng_render(int32_t *lr, uint32_t n, float gain)
     }
 }
 
+
+#ifdef ENG_LAB
+/* the lab (measurements off the device): one machine's hit, dry, its makeup applied, into out (mono) */
+void eng_lab_hit(int machine, const float *m, float *out, uint32_t n)
+{
+    static mvoice_t v;
+    static mcoef_t c;
+    static uint32_t ns = 0x1234567u;
+    uint32_t i;
+    coefs(machine, m, &c);
+    voice_start(machine, &v, 1.0f);
+    for (i = 0; i < n; i++)
+        out[i] = v.on ? voice_sample(machine, &v, &c, &ns) * c.f[0] : 0.0f;
+}
+#endif
