@@ -10,6 +10,13 @@ lights up. Turn it fast and it runs past them. Wherever a knob stands, the sound
 
 ![SIX MACHINES](site/img/screen-main.png) ![A sweetspot](site/img/screen-sweetspot.png)
 
+
+## MIDI out: SIX MACHINES leads
+
+While it plays, SIX MACHINES sends **MIDI clock** (24 a quarter, at its tempo) with **START** and **STOP**, and the
+**KICK's hits as note 36 on channel 10**, over USB: to a computer, or to another FM-1 that plays USB host
+(STRANGER SYNTH: its arp and its sidechain follow).
+
 ## The six machines
 
 | Machine | K1 | K2 | K3 | K4 | Presets |

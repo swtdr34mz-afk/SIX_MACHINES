@@ -280,6 +280,7 @@ static struct {
     int32_t step_drawn;
     uint8_t hit_drawn;
     uint8_t playing;
+    int32_t kick_step;                   /* the step whose KICK went out as a note (-1: none) */
     uint8_t redraw;
     uint32_t load_at, load_shown;        /* the audio load on the screen, looked at twice a second */
     uint32_t ask_until;                  /* SAVE SOUND? asked (until then) */
@@ -533,10 +534,66 @@ static void step_up(void)                /* on -> accent -> off, unless it was h
     ui.redraw = 1;
 }
 
+/* ------------------------------------------------------------- MIDI OUT --- */
+/* SIX MACHINES leads another FM-1 (STRANGER SYNTH) or a computer: MIDI clock (24 a quarter) at its tempo with START and
+ * STOP, counted on the 10 kHz tick (0.1 ms steps) so it leaves on time, and the KICK's hits as note 36 on channel 10 (a synth following
+ * it ducks its sidechain on them). Out over USB, to a computer or to an FM-1 that plays USB host. */
+static volatile uint8_t clk_run, clk_start, clk_stop;
+static volatile uint32_t clk_bpm24 = 124u * 24u;   /* clocks a minute */
+static uint32_t clk_acc;                 /* the 10 kHz tick counts toward the next clock: 600,000 a minute */
+void app_tick_fast(void)
+{
+    if (clk_stop) {
+        if (plat_midi_rt(0xFC0Fu))       /* (CIN 0xF: one byte) */
+            clk_stop = 0;
+        clk_run = 0;
+        return;
+    }
+    if (clk_start) {
+        if (plat_midi_rt(0xFA0Fu)) {
+            clk_start = 0;
+            clk_run = 1;
+            clk_acc = 600000u;           /* the first clock at once */
+        }
+        return;
+    }
+    if (!clk_run)
+        return;
+    clk_acc += clk_bpm24;
+    if (clk_acc >= 600000u) {
+        clk_acc -= 600000u;
+        plat_midi_rt(0xF80Fu);
+    }
+}
+static void clock_play(int on)
+{
+    if (on) {
+        clk_stop = 0;
+        clk_start = 1;
+    } else {
+        clk_start = 0;
+        clk_stop = 1;
+    }
+}
+static void kick_out(int32_t s)          /* the step that plays now: the KICK's hit, as a note */
+{
+    static uint8_t on;
+    const track_t *t = &set.tr[M_KICK];
+    if (on) {
+        plat_midi_send(0x08u | (0x89u << 8) | (36u << 16), TO_USB);
+        on = 0;
+    }
+    if (s < 0 || !(t->steps >> s & 1u) || (ui.muted & 1u))
+        return;
+    plat_midi_send(0x09u | (0x99u << 8) | (36u << 16) | ((t->acc >> s & 1u) ? 127u : 100u) << 24, TO_USB);
+    on = 1;
+}
+
 static void play_toggle(void)
 {
     ui.playing = (uint8_t)!ui.playing;
     eng_play(ui.playing);
+    clock_play(ui.playing);
     ui.redraw = 1;
 }
 
@@ -1184,6 +1241,8 @@ void app_render(int32_t *lr, uint32_t n, uint32_t master_q12)
 
 void app_panic(void)
 {
+    if (ui.playing)
+        clock_play(0);
     ui.playing = 0;
     eng_panic();
 }
@@ -1289,6 +1348,14 @@ void app_frame(void)
     }
     ann_tick(now);
     s = eng_step();
+    clk_bpm24 = (uint32_t)(set.ms.bpm ? set.ms.bpm : 124u) * 24u;   /* the clock follows the tempo */
+    if (ui.playing && s != ui.kick_step) {   /* a new step: the KICK's hit out as a note */
+        ui.kick_step = s;
+        kick_out(s);
+    } else if (!ui.playing && ui.kick_step != -1) {
+        ui.kick_step = -1;
+        kick_out(-1);
+    }
     for (i = 0; i < NMACHINES; i++)
         if (eng_env((int)i) > 0.25f)
             hit |= (uint8_t)(1u << i);
@@ -1376,6 +1443,7 @@ int app_expect(const char *what, int *got)
         *got = TR.preset;
     else if (!strcmp(what, "playing"))
         *got = ui.playing;
+
     else if (!strcmp(what, "step"))
         *got = eng_step();
     else if (!strcmp(what, "hits"))

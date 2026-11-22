@@ -1,0 +1,13 @@
+# SIX MACHINES leads: MIDI clock with START / STOP, the KICK's hits as note 36 on channel 10
+wait 3000
+tapkey w0 100
+wait 300
+tap PLAY
+wait 1000
+expect_out USB FA 00 00
+expect playing 1
+expect clocks_out 54
+out
+tap PLAY
+wait 100
+expect_out USB FC 00 00

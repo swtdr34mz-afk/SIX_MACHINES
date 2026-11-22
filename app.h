@@ -11,6 +11,8 @@
 #define APP_NAME "SIX MACHINES"
 #define APP_SPLASH_RGB RGB(255, 92, 40)
 #define APP_SPLASH                       /* app_splash: the rack powering up, not the platform's page */
+#define APP_TICK_FAST                    /* app_tick_fast: MIDI clock out, on time */
+void app_tick_fast(void);
 #define APP_BLOCK 128u                   /* frames per audio block: 2.9 ms at 44.1 kHz (a drum machine: tight) */
 
 /* the store: the app's settings (the knobs, the patterns, tempo), the panel calibration (the platform's) and the user

@@ -37,6 +37,7 @@ jobs:
         run: |
           python3 fm1-base/tools/build.py . --host
           build/host/sixmachines_host tests/basic.txt build/host
+          build/host/sixmachines_host tests/midi_out.txt build/host
 
       - name: JieLi toolchain
         run: fm1-base/tools/get_toolchain.sh "$HOME/.jieli"
