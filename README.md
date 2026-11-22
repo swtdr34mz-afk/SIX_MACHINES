@@ -102,7 +102,7 @@ Settings, patterns, pages and scene B save themselves a few seconds after the la
     X0X_FONTSET=terminus python3 fm1-base/tools/build.py . --host
     build/host/sixmachines_host tests/basic.txt build/host
 
-GitHub Actions builds the installable `.fwsc` on every push (Actions tab > the run > Artifacts). A tag `v0.3` makes a
+GitHub Actions builds the installable `.fwsc` on every push (Actions tab > the run > Artifacts). A tag `v0.1.0` makes a
 release with it.
 
 ## Licence
