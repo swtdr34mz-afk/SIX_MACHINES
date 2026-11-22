@@ -1,0 +1,96 @@
+# SIX MACHINES in the host simulator:
+#   X0X_FONTSET=terminus python3 fm1-base/tools/build.py . --host, then build/host/sixmachines_host tests/basic.txt build/host
+splashshot splash.png
+wait 600
+# first start: four on the floor, 124 BPM, the first preset
+expect steps 4369
+expect acc 1
+expect bpm 124
+expect preset 0
+expect m1 50
+expect zone2 1
+shot boot.png
+# play: the kick runs, its steps go round
+tap PLAY
+expect playing 1
+wav beat.wav
+wait 2000
+wavstop
+expect hits >3
+expect peak_db_min -20
+shot playing.png
+# a step: on, accent, off
+tapkey w2
+expect steps 4373
+tapkey w2
+expect acc 5
+tapkey w2
+expect steps 4369
+expect acc 1
+# K1 slowly from DEEP (50) up: it leaves the zone after its rest, then 808 (75) rests
+turn K1 1
+wait 120
+expect m1 50
+turn K1 1
+wait 120
+turn K1 1
+wait 120
+turn K1 1
+wait 120
+expect m1 51
+expect zone1 -1
+turn K1 24
+wait 200
+expect m1 75
+expect zone1 2
+shot sweetspot.png
+wait 900
+shot knobs.png
+# the other knobs: GRIT to RUMBLE, BOOM to 808
+turn K4 40
+wait 200
+turn K3 40
+wait 200
+wav grit.wav
+wait 2000
+wavstop
+expect peak_db_min -20
+# a preset loads all four
+turn PRESET 1
+wait 100
+expect preset 1
+expect m1 75
+expect m2 12
+expect m3 85
+expect m4 0
+# tempo and swing
+turn SELECT 4
+wait 100
+expect bpm 128
+turn ALGO 20
+wait 100
+expect swing 20
+# the black keys: KICK plays, the others are coming
+tap PLAY
+expect playing 0
+tapkey b0
+wait 50
+expect hits >4
+tapkey b1
+wait 50
+shot soon.png
+# REC held: the pattern cleared
+press REC
+wait 1100
+release REC
+expect steps 0
+# the settings kept across a restart
+tapkey w0
+tapkey w8
+wait 4500
+expect dirty 0
+reboot
+wait 600
+expect steps 257
+expect preset 1
+expect bpm 128
