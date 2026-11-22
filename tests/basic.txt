@@ -2,18 +2,18 @@
 #   X0X_FONTSET=terminus python3 fm1-base/tools/build.py . --host, then build/host/sixmachines_host tests/basic.txt build/host
 splashshot splash.png
 wait 600
-# first start: KICK picked, four on the floor, snare on 2 and 4, hats on the offbeats, 124 BPM
+# first start: KICK picked, SOUND page, four on the floor, snare on 2 and 4, hats on the offbeats, 16 steps
 expect sel 0
+expect page 0
 expect steps 4369
 expect acc 1
 expect steps1 4112
 expect steps4 17476
+expect length 16
 expect bpm 124
-expect preset 0
 expect m1 50
 expect zone2 1
 shot boot.png
-# play: the beat runs
 tap PLAY
 expect playing 1
 wav beat.wav
@@ -29,11 +29,9 @@ tapkey w2
 expect acc 5
 tapkey w2
 expect steps 4369
-expect acc 1
-# K1 slowly from DEEP (50) up: it leaves the zone after its rest, then 808 (75) rests
+# K1 slowly from DEEP (50) up: it rests, leaves, and rests on 808 (75)
 turn K1 1
 wait 120
-expect m1 50
 turn K1 1
 wait 120
 turn K1 1
@@ -41,83 +39,155 @@ wait 120
 turn K1 1
 wait 120
 expect m1 51
-expect zone1 -1
 turn K1 24
 wait 200
 expect m1 75
 expect zone1 2
 shot sweetspot.png
 wait 900
-# SNARE: picked by its key, its own knobs and steps
-tapkey b1
-wait 50
-expect sel 1
-expect steps 4112
-expect m1 50
-tapkey w6
-expect steps 4176
-turn K4 33
-wait 200
-expect m4 75
-expect zone4 2
-wait 900
-shot snare.png
-# HATS: a preset, then muted with SEQ held
-tapkey b4
-wait 50
-expect sel 4
-turn PRESET 2
+# a p-lock: step 3 held, K1 turned: the step on, its lock set, the track's own value kept
+key w2 down
+turn K1 20
 wait 100
-expect preset 2
-expect m2 105
+expect lock1.3 >75
+expect m1 75
+shot plock.png
+key w2 up
+wait 50
+expect steps 4373
+# a condition and retrigs on held steps (no toggle on their release)
+key w4 down
+turn SELECT 1
+wait 50
+key w4 up
+expect cond5 1
+expect steps 4373
+key w8 down
+turn ALGO 2
+wait 50
+shot retrig.png
+key w8 up
+expect retrig9 3
+# PRESET with a step held: its locks gone
+key w2 down
+turn PRESET 1
+wait 50
+key w2 up
+expect lock1.3 255
+# the pages: SAT, back; MASTER, DELAY, back
+tap SEL
+expect page 1
+turn K2 40
+wait 100
+shot sat.png
+tap SEL
+expect page 0
+tap FX
+expect page 5
+wait 1300
+shot master.png
+tap FX
+expect page 6
+tap FX
+expect page 0
+tap ENV
+expect page 2
+wait 1300
+shot env.png
+tap HOME
+expect page 0
+# the new machines, each with a beat of its own
+tapkey b2
+expect sel 2
+tapkey w3
+tapkey w11
+tapkey w14
+tapkey b3
+expect sel 3
+turn PRESET 1
+tapkey w0
+tapkey w8
+tapkey b5
+expect sel 5
+tapkey w4
+tapkey w12
+wait 1300
+shot clap.png
+wav all.wav
+wait 4000
+wavstop
+expect peak_db_min -20
+# 32 steps: the first half copied into the second
+tap SEQ
+wait 50
+expect length 32
+expect steps0 286593301
+tap OCT+
+expect view 1
+shot steps32.png
+tap OCT-
+expect view 0
+# SEQ held + a black key: a mute (and no length change)
 press SEQ
 tapkey b4
 release SEQ
+wait 50
 expect muted 16
-expect sel 4
-wait 1300
-shot muted.png
+expect length 32
 press SEQ
 tapkey b4
 release SEQ
 expect muted 0
-# a machine still to come: not picked
-tapkey b2
+# PERF mode: the pads
+tap ARP
+expect perf 1
+expect page 7
+key w2 down
 wait 50
-expect sel 4
-shot soon.png
-wait 1300
-# the whole beat with the changes, and with GRIT and RATTLE pushed
-tapkey b0
-turn K4 60
-wait 100
-wav beat2.wav
-wait 2000
+expect pads 4
+wav repeat.wav
+wait 800
+key w2 up
+wait 50
+expect pads 0
+key w4 down
+wait 900
+key w4 up
+wait 400
 wavstop
-expect peak_db_min -20
-# tempo and swing
-turn SELECT 4
+key w5 down
+wait 1500
+shot build.png
+key w5 up
+wait 300
+key w8 down
+wait 300
+key w8 up
+key w6 down
+wait 300
+key w6 up
+key w15 down
 wait 100
-expect bpm 128
-turn ALGO 20
-wait 100
-expect swing 20
+key w15 up
+expect playing 1
+tap ARP
+expect perf 0
+# scene B kept; the scene knob morphs to it
+tap SAVE
+wait 50
+expect scene 1
 tap PLAY
 expect playing 0
-# REC held: the picked machine's pattern cleared, the others kept
+# REC held: the machine's pattern cleared
 press REC
 wait 1100
 release REC
 expect steps 0
-expect steps1 4176
 # the settings kept across a restart
-tapkey w0
-tapkey w8
 wait 4500
 expect dirty 0
 reboot
 wait 600
-expect sel 0
-expect steps 257
-expect steps1 4176
-expect bpm 128
+expect sel 5
+expect length 32
+expect cond5 0

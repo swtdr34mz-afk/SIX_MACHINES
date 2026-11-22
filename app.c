@@ -1,77 +1,104 @@
 /* SPDX-License-Identifier: MPL-2.0
  * Copyright (C) 2026 swtdr34mz (SIX MACHINES) */
-/* SIX MACHINES: input, the knobs and their sweetspots, the pattern, the screen, settings. Part of the unity build
- * (device/unity.c, host/plat_host.c), after the platform: gfx.c and announce.c are in scope. The sound is dsp/engine.c.
+/* SIX MACHINES: input, the pages of knobs and their sweetspots, the patterns (p-locks, conditions, retrigs), the
+ * performance pads, the screen, settings. Part of the unity build (device/unity.c, host/plat_host.c), after the
+ * platform: gfx.c and announce.c are in scope. The sound is dsp/engine.c.
  *
- * Controls (v0.2: KICK, SNARE, HATS)
- *   black keys      the six machines, left to right (KICK SNARE TOMS METAL HATS CLAP): a key picks the machine (and
- *                   plays it while the sequencer is stopped); SEQ held + a key: the machine muted / back (TOMS, METAL, CLAP are coming)
- *   white keys      the picked machine's 16 steps: a tap turns a step on, again ACCENT (louder), again off
- *   K1..K4          the picked machine's four macros. Each moves several parameters at once; turned slowly it rests a
- *                   few detents on each sweetspot (its name lights up); turned fast it runs past them
- *   SELECT          tempo (BPM)      ALGORITHM  swing      PRESET  a start preset for the machine's four knobs
- *   PLAY            the sequencer: start from step 1 / stop
- *   REC held 1 s    the machine's pattern cleared
- *   OCT- / OCT+     the machine's level
+ * Controls
+ *   black keys      the six machines (KICK SNARE TOMS METAL HATS CLAP): a key picks the machine (and plays it while the
+ *                   sequencer is stopped); SEQ held + a key: the machine muted / back
+ *   white keys      the picked machine's steps (the page of 16 shown): a tap turns a step on, again ACCENT, again off.
+ *                   A step held: K1..K4 lock the machine's macros on it (p-locks), SELECT its condition, ALGORITHM its
+ *                   retrigs, PRESET clears its locks. In PERF mode (ARP) the white keys are the performance pads
+ *   K1..K4          the page's four knobs; turned slowly each rests a few detents on its sweetspots
+ *   pages           HOME the machine's SOUND, SEL its SAT, ENV its ENV, LFO its LFO, EDIT its MIX; FX the MASTER (again:
+ *                   DELAY); GLO PERFORM (the DJ filter, the scene, the build-up's length, the filter's resonance).
+ *                   The same button again: back to SOUND
+ *   SELECT          tempo (BPM)      ALGORITHM  swing      PRESET  a start preset for the machine's SOUND
+ *   ARP             PERF mode: the white keys are the pads (repeat, tape stop, build-up, throws, kills, fill, scene,
+ *                   break, freeze, drop), held
+ *   SEQ             16 / 32 steps (to 32: the first 16 copied when the second half is empty)
+ *   OCT- / OCT+     the page of steps shown (1-16, 17-32)
+ *   SAVE            scene B: the six machines' SOUND now, for SCENE (PERFORM) and its pad to morph to; held 1 s: gone
+ *   PLAY            the sequencer: start from step 1 / stop.   REC held 1 s: the machine's pattern cleared
  *   Settings save themselves a few seconds after the last change. */
 #include "fastmath.h"
 #include "engine.h"
 
-#define SET_MAGIC 0x32584D36u            /* "6MX2": the settings record; another magic loads the defaults */
-typedef struct {                         /* a machine's track */
-    uint8_t m[4];                        /* its macros 0..127 */
-    uint16_t steps, acc;                 /* its pattern: steps that play, and the accented ones */
-    uint8_t preset;                      /* the preset PRESET loaded last */
-    uint8_t level;                       /* 0 .. 10 */
-    uint8_t rsv[2];
-} track_t;
+#define SET_MAGIC 0x33584D36u            /* "6MX3": the settings record; another magic loads the defaults */
 typedef struct {
     uint32_t magic;
     track_t tr[NMACHINES];
-    uint8_t bpm;                         /* 60 .. 200 */
-    uint8_t swing;                       /* 0 .. 100 % */
+    master_t ms;
     uint8_t sel;                         /* the machine picked */
-    uint8_t rsv[5];
+    uint8_t rsv[3];
 } settings_t;
+_Static_assert(sizeof(settings_t) <= PLAT_STORE_MAX, "the settings outgrew a store object");
 static settings_t set;
 static uint8_t set_dirty;
 static uint32_t dirty_at;
 
 static const uint8_t WK[16] = PLAT_WHITE_KEYS, BK[11] = PLAT_BLACK_KEYS;
+static const char *const PAD_SHORT[NPADS] = {"1/4", "1/8", "1/16", "1/32", "TAPE", "BLD", "RVB", "DLY",
+                                             "K-LO", "K-MD", "K-HI", "FILL", "SCN", "BRK", "FRZ", "DROP"};
+
+#define TR (set.tr[set.sel])             /* the picked machine's track */
+#define MC (MACHINES[set.sel])           /* and the machine */
 
 /* --------------------------------------------------------------- settings --- */
 /* the first beat: four on the floor (the first accented), the snare on 2 and 4, the hats on the offbeats */
 static const uint16_t DEF_STEPS[NMACHINES] = {0x1111u, 0x1010u, 0, 0, 0x4444u, 0};
 static const uint16_t DEF_ACC[NMACHINES] = {0x0001u, 0, 0, 0, 0x4444u, 0};
+static const uint8_t DEF_REVERB[NMACHINES] = {0, 30, 20, 30, 0, 40};
 
 static void settings_defaults(void)
 {
-    uint32_t i, k;
+    uint32_t i, k, s;
     memset(&set, 0, sizeof set);
     set.magic = SET_MAGIC;
     for (i = 0; i < NMACHINES; i++) {
-        for (k = 0; k < 4u; k++)
-            set.tr[i].m[k] = MACHINES[i].preset[0].m[k];
-        set.tr[i].steps = DEF_STEPS[i];
-        set.tr[i].acc = DEF_ACC[i];
-        set.tr[i].level = 8;
+        track_t *t = &set.tr[i];
+        for (k = 0; k < 4u; k++) {
+            t->m[k] = MACHINES[i].preset[0].m[k];
+            t->sat[k] = PAGE_DEFAULT[PG_SAT][k];
+            t->env[k] = PAGE_DEFAULT[PG_ENV][k];
+            t->lfo[k] = PAGE_DEFAULT[PG_LFO][k];
+            t->mix[k] = PAGE_DEFAULT[PG_MIX][k];
+            set.ms.scene[i][k] = t->m[k];
+        }
+        t->mix[2] = DEF_REVERB[i];
+        t->steps = DEF_STEPS[i];
+        t->acc = DEF_ACC[i];
+        for (s = 0; s < NSTEPS; s++)
+            for (k = 0; k < 4u; k++)
+                t->lock[s][k] = NO_LOCK;
     }
-    set.bpm = 124;
+    for (k = 0; k < 4u; k++) {
+        set.ms.fx[k] = PAGE_DEFAULT[PG_FX][k];
+        set.ms.fx2[k] = PAGE_DEFAULT[PG_FX2][k];
+        set.ms.glo[k] = PAGE_DEFAULT[PG_GLO][k];
+    }
+    set.ms.length = 16;
+    set.ms.bpm = 124;
     set.sel = M_KICK;
 }
 
 static int settings_ok(void)
 {
-    uint32_t i, k;
+    uint32_t i, k, s;
     for (i = 0; i < NMACHINES; i++) {
+        const track_t *t = &set.tr[i];
         for (k = 0; k < 4u; k++)
-            if (set.tr[i].m[k] > 127u)
+            if (t->m[k] > 127u || t->sat[k] > 127u || t->env[k] > 127u || t->lfo[k] > 127u || t->mix[k] > 127u)
                 return 0;
-        if (set.tr[i].preset >= NPRESETS || set.tr[i].level > 10u)
+        if (t->preset >= NPRESETS)
             return 0;
+        for (s = 0; s < NSTEPS; s++)
+            if (t->cond[s] >= NCONDS || t->retrig[s] > 4u)
+                return 0;
     }
-    return set.magic == SET_MAGIC && set.bpm >= 60u && set.bpm <= 200u && set.swing <= 100u && set.sel < NMACHINES
-           && MACHINES[set.sel].ready;
+    return set.magic == SET_MAGIC && set.ms.bpm >= 60u && set.ms.bpm <= 200u && set.ms.swing <= 100u
+           && (set.ms.length == 16u || set.ms.length == 32u) && set.sel < NMACHINES;
 }
 
 static void settings_load(void)
@@ -91,21 +118,6 @@ static void settings_save(void)
     if (plat_store_save(OBJ_SETTINGS, &set, sizeof set) == 0)
         set_dirty = 0;
 }
-
-/* everything the engine plays from the settings */
-static void apply(void)
-{
-    uint32_t i;
-    for (i = 0; i < NMACHINES; i++) {
-        eng_macros((int)i, set.tr[i].m);
-        eng_pattern((int)i, set.tr[i].steps, set.tr[i].acc & set.tr[i].steps);
-        eng_level((int)i, (float)set.tr[i].level / 10.0f);
-    }
-    eng_tempo((float)set.bpm, (float)set.swing / 100.0f);
-}
-
-#define TR (set.tr[set.sel])             /* the picked machine's track */
-#define MC (MACHINES[set.sel])           /* and the machine */
 
 /* ------------------------------------------------------- knobs: sweetspots --- */
 /* A knob's position runs past each sweetspot zone REST detents more than its value: turned slowly, it rests on the
@@ -142,8 +154,7 @@ static int32_t pos_of_val(const macro_t *mc, int32_t v)
     return p;
 }
 
-/* the zone the value is on (-1: between zones) */
-static int zone_at(const macro_t *mc, int32_t v)
+static int zone_at(const macro_t *mc, int32_t v)   /* the zone the value is on (-1: between zones) */
 {
     uint32_t z;
     for (z = 0; z < mc->nzones; z++)
@@ -152,8 +163,7 @@ static int zone_at(const macro_t *mc, int32_t v)
     return -1;
 }
 
-/* the zone nearest the value (the one the knob is heading to or coming from) */
-static int zone_near(const macro_t *mc, int32_t v)
+static int zone_near(const macro_t *mc, int32_t v)   /* the zone nearest the value */
 {
     uint32_t z;
     int best = 0;
@@ -170,13 +180,6 @@ static int zone_near(const macro_t *mc, int32_t v)
     return best;
 }
 
-static void knobs_from_settings(void)    /* the knobs' positions: the picked machine's values */
-{
-    uint32_t k;
-    for (k = 0; k < 4u; k++)
-        knob_pos[k] = pos_of_val(&MC.macro[k], TR.m[k]);
-}
-
 /* ---------------------------------------------------------------------- UI --- */
 static struct {
     char msg[2][24];
@@ -185,8 +188,16 @@ static struct {
     uint32_t zone_until;
     uint32_t knob_at[4];                 /* when each knob was last turned */
     uint32_t keys, btn;
-    uint32_t rec_t;
+    uint32_t rec_t, save_t, seq_t;       /* when REC, SAVE, SEQ went down (0: not, or already used) */
+    uint8_t seq_used;                    /* a machine muted while SEQ was held: no length change on its release */
     uint32_t enc_at[NE];
+    uint8_t page;                        /* PG_* */
+    uint8_t view;                        /* the page of steps shown: 0 = 1-16, 1 = 17-32 */
+    uint8_t perf;                        /* PERF mode: the white keys are the pads */
+    uint32_t pads;
+    int8_t held;                         /* the step held (-1 none), and whether it was edited (no toggle on release) */
+    uint8_t held_edit, held_was_on;
+    uint32_t held_at;
     uint8_t muted;                       /* bit per machine (live: not kept) */
     int32_t step_drawn;
     uint8_t hit_drawn;
@@ -242,6 +253,45 @@ void app_say(const char *a, const char *b)
     }
 }
 
+/* the page's knobs and the bytes they set; with a step held on SOUND, its locks */
+static const macro_t *page_knob(int k)
+{
+    return ui.page == PG_SOUND ? &MC.macro[k] : &PAGE_KNOBS[ui.page][k];
+}
+static uint8_t *page_vals(void)
+{
+    switch (ui.page) {
+    case PG_SAT: return TR.sat;
+    case PG_ENV: return TR.env;
+    case PG_LFO: return TR.lfo;
+    case PG_MIX: return TR.mix;
+    case PG_FX: return set.ms.fx;
+    case PG_FX2: return set.ms.fx2;
+    case PG_GLO: return set.ms.glo;
+    default: return TR.m;
+    }
+}
+static int locking(void) { return ui.held >= 0 && ui.page == PG_SOUND && !ui.perf; }
+static int32_t knob_val(int k)
+{
+    if (locking()) {
+        uint8_t l = TR.lock[ui.held][k];
+        return l == NO_LOCK ? TR.m[k] : l;
+    }
+    return page_vals()[k];
+}
+static const char *zone_name(const macro_t *mc, int z)   /* a TARGET's zones: the machine's macro names */
+{
+    return mc->zone[z] ? mc->zone[z] : MC.macro[z].name;
+}
+
+static void knobs_sync(void)             /* the knobs' positions from the values they show now */
+{
+    uint32_t k;
+    for (k = 0; k < 4u; k++)
+        knob_pos[k] = pos_of_val(page_knob((int)k), knob_val((int)k));
+}
+
 /* a quick turn moves further: x1 slow, more when the detents come close together */
 static int32_t accel(int k, int32_t e, int32_t mid, int32_t fast)
 {
@@ -256,24 +306,41 @@ static int32_t accel(int k, int32_t e, int32_t mid, int32_t fast)
 
 static void knob(int k, int32_t e)
 {
-    const macro_t *mc = &MC.macro[k];
+    const macro_t *mc = page_knob(k);
     int32_t p = clamp(knob_pos[k] + accel(EN_K1 + k, e, 3, 6), 0, pos_max(mc)), v = val_of_pos(mc, p);
-    int zb = zone_at(mc, TR.m[k]), za = zone_at(mc, v);
+    int32_t was = knob_val(k);
+    int zb = zone_at(mc, was), za = zone_at(mc, v);
     knob_pos[k] = p;
     ui.knob_at[k] = plat_ms();
     ui.redraw = 1;
-    if (v == TR.m[k])
+    if (v == was)
         return;
-    TR.m[k] = (uint8_t)v;
-    eng_macros(set.sel, TR.m);
+    if (locking()) {                     /* a p-lock on the step held */
+        TR.lock[ui.held][k] = (uint8_t)v;
+        ui.held_edit = 1;
+        if (!(TR.steps >> ui.held & 1u))
+            TR.steps |= 1u << ui.held;
+    } else {
+        page_vals()[k] = (uint8_t)v;
+    }
+    eng_changed(set.sel);
     dirty();
     if (za >= 0 && za != zb) {           /* a sweetspot reached: its name, big */
         ui.zone_k = (int8_t)k;
         ui.zone_z = (int8_t)za;
         ui.zone_until = plat_ms() + 700u;
         if (ann_on())
-            ann_say(mc->zone[za], 0, ANN_NOW);
+            ann_say(zone_name(mc, za), 0, ANN_NOW);
     }
+}
+
+static void page_set(int pg)
+{
+    ui.page = (uint8_t)pg;
+    ui.zone_until = 0;
+    knobs_sync();
+    ui.redraw = 1;
+    app_say(pg == PG_SOUND ? MC.name : PAGE_NAME[pg], pg == PG_SOUND ? "SOUND" : pg >= PG_FX ? "" : MC.name);
 }
 
 static void preset_load(int32_t d)
@@ -282,32 +349,60 @@ static void preset_load(int32_t d)
     TR.preset = (uint8_t)(((int32_t)TR.preset + d % NPRESETS + NPRESETS) % NPRESETS);
     for (k = 0; k < 4u; k++)
         TR.m[k] = MC.preset[TR.preset].m[k];
-    knobs_from_settings();
-    eng_macros(set.sel, TR.m);
+    knobs_sync();
+    eng_changed(set.sel);
     if (!ui.playing)
         eng_hit(set.sel, 1.0f);           /* stopped: hear it */
     dirty();
     app_say(MC.name, MC.preset[TR.preset].name);
 }
 
-static void pattern_sync(void) { eng_pattern(set.sel, TR.steps, TR.acc & TR.steps); }
+static int32_t len_steps(void) { return set.ms.length == 32u ? 32 : 16; }
 
-static void step_tap(uint32_t s)         /* off -> on -> accent -> off */
+/* a step key down: off -> on at once (and held: its locks, condition, retrigs); an on step changes on release */
+static void step_down(uint32_t i)
 {
-    uint16_t bit = (uint16_t)(1u << s);
-    if (!(TR.steps & bit)) {
+    int32_t s = (int32_t)i + 16 * ui.view;
+    uint32_t bit = 1u << s;
+    if (s >= len_steps())
+        return;
+    ui.held = (int8_t)s;
+    ui.held_edit = 0;
+    ui.held_at = plat_ms();
+    ui.held_was_on = (TR.steps & bit) != 0;
+    if (!ui.held_was_on) {
         TR.steps |= bit;
-        TR.acc &= (uint16_t)~bit;
-    } else if (!(TR.acc & bit)) {
-        TR.acc |= bit;
-    } else {
-        TR.steps &= (uint16_t)~bit;
-        TR.acc &= (uint16_t)~bit;
+        TR.acc &= ~bit;
+        if (!ui.playing)
+            eng_hit(set.sel, 0.72f);      /* stopped: hear what the step will play */
+        dirty();
     }
-    pattern_sync();
-    if (!ui.playing && (TR.steps & bit))
-        eng_hit(set.sel, (TR.acc & bit) ? 1.0f : 0.72f);   /* stopped: hear what the step will play */
-    dirty();
+    knobs_sync();
+    ui.redraw = 1;
+}
+
+static void step_up(void)                /* on -> accent -> off, unless it was held to edit */
+{
+    int32_t s = ui.held;
+    uint32_t bit = 1u << s;
+    if (ui.held_was_on && !ui.held_edit && plat_ms() - ui.held_at < 500u) {
+        if (!(TR.acc & bit)) {
+            TR.acc |= bit;
+            if (!ui.playing)
+                eng_hit(set.sel, 1.0f);
+        } else {
+            uint32_t k;
+            TR.steps &= ~bit;
+            TR.acc &= ~bit;
+            for (k = 0; k < 4u; k++)     /* a step turned off forgets its locks, condition and retrigs */
+                TR.lock[s][k] = NO_LOCK;
+            TR.cond[s] = 0;
+            TR.retrig[s] = 0;
+        }
+        dirty();
+    }
+    ui.held = -1;
+    knobs_sync();
     ui.redraw = 1;
 }
 
@@ -318,96 +413,233 @@ static void play_toggle(void)
     ui.redraw = 1;
 }
 
-/* a black key: SEQ held, the machine muted or back; else the machine picked and played */
+static void length_toggle(void)
+{
+    uint32_t t;
+    if (set.ms.length == 16u) {
+        int empty = 1;
+        for (t = 0; t < NMACHINES; t++)
+            if (set.tr[t].steps >> 16)
+                empty = 0;
+        if (empty)                       /* the second half empty: the first one copied into it */
+            for (t = 0; t < NMACHINES; t++) {
+                track_t *tr = &set.tr[t];
+                uint32_t s;
+                tr->steps |= (tr->steps & 0xFFFFu) << 16;
+                tr->acc |= (tr->acc & 0xFFFFu) << 16;
+                for (s = 0; s < 16u; s++) {
+                    uint32_t k;
+                    for (k = 0; k < 4u; k++)
+                        tr->lock[s + 16u][k] = tr->lock[s][k];
+                    tr->cond[s + 16u] = tr->cond[s];
+                    tr->retrig[s + 16u] = tr->retrig[s];
+                }
+            }
+        set.ms.length = 32;
+    } else {
+        set.ms.length = 16;
+        ui.view = 0;
+    }
+    dirty();
+    app_say("LENGTH", set.ms.length == 32u ? "32 STEPS" : "16 STEPS");
+}
+
+/* a black key: SEQ held, the machine muted or back; else the machine picked (and played while stopped) */
 static void machine_key(uint32_t i, uint32_t btn)
 {
-    if (!MACHINES[i].ready) {
-        app_say(MACHINES[i].name, "COMING SOON");
-        return;
-    }
     if (btn >> B_SEQ & 1u) {
         ui.muted ^= (uint8_t)(1u << i);
+        ui.seq_used = 1;
         eng_mute((int)i, ui.muted >> i & 1u);
         app_say(MACHINES[i].name, (ui.muted >> i & 1u) ? "MUTED" : "ON");
         return;
     }
-    if (!ui.playing)                     /* stopped: hear it; while the beat runs a key only picks the machine */
+    if (!ui.playing)
         eng_hit((int)i, 1.0f);
     if (set.sel != i) {
         set.sel = (uint8_t)i;
-        knobs_from_settings();
+        ui.held = -1;
+        knobs_sync();
         ui.zone_until = 0;
         dirty();
     }
     ui.redraw = 1;
 }
 
+static void scene_save(void)
+{
+    uint32_t t, k;
+    for (t = 0; t < NMACHINES; t++)
+        for (k = 0; k < 4u; k++)
+            set.ms.scene[t][k] = set.tr[t].m[k];
+    set.ms.has_scene = 1;
+    dirty();
+    app_say("SCENE B", "SAVED");
+}
+
+static void button(uint32_t i)
+{
+    static const int8_t PAGE_OF[NB] = {PG_FX, PG_SAT, PG_ENV, PG_LFO, PG_MIX, PG_GLO, PG_SOUND, -1, -1, -1, -1, -1,
+                                       -1, -1};
+    if (PAGE_OF[i] >= 0) {
+        int pg = PAGE_OF[i];
+        if (i == B_FX)
+            pg = ui.page == PG_FX ? PG_FX2 : ui.page == PG_FX2 ? PG_SOUND : PG_FX;
+        else if (ui.page == pg)
+            pg = PG_SOUND;
+        page_set(pg);
+        return;
+    }
+    switch (i) {
+    case B_PLAY: play_toggle(); break;
+    case B_REC: ui.rec_t = plat_ms(); break;
+    case B_SAVE: ui.save_t = plat_ms(); break;
+    case B_SEQ:
+        ui.seq_t = plat_ms();
+        ui.seq_used = 0;
+        break;
+    case B_ARP:
+        ui.perf = (uint8_t)!ui.perf;
+        ui.held = -1;
+        ui.pads = 0;
+        eng_pads(0);
+        if (ui.perf && ui.page != PG_GLO)
+            page_set(PG_GLO);
+        app_say("PERFORM", ui.perf ? "PADS ON" : "PADS OFF");
+        break;
+    case B_OCTDN:
+    case B_OCTUP:
+        if (set.ms.length == 32u) {
+            ui.view = i == B_OCTUP ? 1 : 0;
+            app_say("STEPS", ui.view ? "17-32" : "1-16");
+        } else {
+            app_say("LENGTH", "16 STEPS");
+        }
+        break;
+    default: break;
+    }
+}
+
+static void held_buttons(uint32_t btn)   /* the ones that act on release, or after a hold */
+{
+    uint32_t now = plat_ms();
+    if (ui.rec_t) {                      /* REC held a second: the machine's pattern cleared */
+        if (!(btn >> B_REC & 1u))
+            ui.rec_t = 0;
+        else if (now - ui.rec_t >= 1000u) {
+            uint32_t s, k;
+            ui.rec_t = 0;
+            TR.steps = TR.acc = 0;
+            for (s = 0; s < NSTEPS; s++) {
+                for (k = 0; k < 4u; k++)
+                    TR.lock[s][k] = NO_LOCK;
+                TR.cond[s] = TR.retrig[s] = 0;
+            }
+            dirty();
+            app_say(MC.name, "CLEARED");
+        }
+    }
+    if (ui.save_t) {                     /* SAVE: scene B; held a second: none */
+        if (!(btn >> B_SAVE & 1u)) {
+            ui.save_t = 0;
+            scene_save();
+        } else if (now - ui.save_t >= 1000u) {
+            ui.save_t = 0;
+            set.ms.has_scene = 0;
+            dirty();
+            app_say("SCENE B", "CLEARED");
+        }
+    }
+    if (ui.seq_t && !(btn >> B_SEQ & 1u)) {   /* SEQ let go: the length, unless it muted something */
+        if (!ui.seq_used && now - ui.seq_t < 600u)
+            length_toggle();
+        ui.seq_t = 0;
+    }
+}
+
 static void input(void)
 {
-    uint32_t keys = plat_keys(), btn = plat_buttons(), i;
+    uint32_t keys = plat_keys(), btn = plat_buttons(), i, pads = 0;
     int32_t e;
-    for (i = 0; i < 16u; i++) {          /* the steps */
+    for (i = 0; i < 16u; i++) {          /* the steps, or the pads */
         uint32_t bit = 1u << WK[i];
-        if ((keys & bit) && !(ui.keys & bit))
-            step_tap(i);
+        if (ui.perf) {
+            if (keys & bit)
+                pads |= 1u << i;
+            continue;
+        }
+        if ((keys & bit) && !(ui.keys & bit) && ui.held < 0)
+            step_down(i);
+        else if (!(keys & bit) && (ui.keys & bit) && ui.held == (int8_t)(i + 16u * ui.view))
+            step_up();
+    }
+    if (ui.perf && pads != ui.pads) {
+        uint32_t on = pads & ~ui.pads;
+        for (i = 0; i < NPADS; i++)
+            if (on >> i & 1u)
+                app_say("PAD", PAD_NAME[i]);
+        ui.pads = pads;
+        eng_pads(pads);
+        ui.redraw = 1;
     }
     for (i = 0; i < NMACHINES; i++) {    /* the machines */
         uint32_t bit = 1u << BK[i];
         if ((keys & bit) && !(ui.keys & bit))
             machine_key(i, btn);
     }
-    for (i = 0; i < NB; i++) {
-        uint32_t bit = 1u << i;
-        if (!(btn & bit) || (ui.btn & bit))
-            continue;
-        if (i == B_PLAY)
-            play_toggle();
-        else if (i == B_REC)
-            ui.rec_t = plat_ms();
-        else if (i == B_OCTDN || i == B_OCTUP) {
-            int32_t l = clamp((int32_t)TR.level + (i == B_OCTUP ? 1 : -1), 0, 10);
-            char t[8];
-            TR.level = (uint8_t)l;
-            eng_level(set.sel, (float)l / 10.0f);
-            dirty();
-            int_text(l * 10, t);
-            text_cat(t, "%");
-            app_say(MC.name, t);
-        }
-    }
-    if (ui.rec_t) {                      /* REC held a second: the machine's pattern cleared */
-        if (!(btn >> B_REC & 1u))
-            ui.rec_t = 0;
-        else if (plat_ms() - ui.rec_t >= 1000u) {
-            ui.rec_t = 0;
-            TR.steps = TR.acc = 0;
-            pattern_sync();
-            dirty();
-            app_say(MC.name, "CLEARED");
-        }
-    }
+    for (i = 0; i < NB; i++)
+        if ((btn >> i & 1u) && !(ui.btn >> i & 1u))
+            button(i);
+    held_buttons(btn);
     for (i = 0; i < 4u; i++)
         if ((e = plat_enc(EN_K1 + (int)i)) != 0)
             knob((int)i, e);
     if ((e = plat_enc(EN_SELECT)) != 0) {
-        char t[8];
-        set.bpm = (uint8_t)clamp((int32_t)set.bpm + accel(EN_SELECT, e, 2, 5), 60, 200);
-        eng_tempo((float)set.bpm, (float)set.swing / 100.0f);
-        dirty();
-        int_text(set.bpm, t);
-        app_say("BPM", t);
+        if (ui.held >= 0) {              /* the step's condition */
+            int32_t c = clamp((int32_t)TR.cond[ui.held] + (e > 0 ? 1 : -1), 0, NCONDS - 1);
+            TR.cond[ui.held] = (uint8_t)c;
+            ui.held_edit = 1;
+            dirty();
+            app_say("CONDITION", COND_NAME[c]);
+        } else {
+            char t[8];
+            set.ms.bpm = (uint8_t)clamp((int32_t)set.ms.bpm + accel(EN_SELECT, e, 2, 5), 60, 200);
+            dirty();
+            int_text(set.ms.bpm, t);
+            app_say("BPM", t);
+        }
     }
     if ((e = plat_enc(EN_ALGO)) != 0) {
         char t[8];
-        set.swing = (uint8_t)clamp((int32_t)set.swing + accel(EN_ALGO, e, 2, 4), 0, 100);
-        eng_tempo((float)set.bpm, (float)set.swing / 100.0f);
-        dirty();
-        int_text(set.swing, t);
-        text_cat(t, "%");
-        app_say("SWING", t);
+        if (ui.held >= 0) {              /* the step's retrigs */
+            int32_t r = clamp((TR.retrig[ui.held] < 2u ? 1 : (int32_t)TR.retrig[ui.held]) + (e > 0 ? 1 : -1), 1, 4);
+            TR.retrig[ui.held] = (uint8_t)(r < 2 ? 0 : r);
+            ui.held_edit = 1;
+            dirty();
+            int_text(r, t);
+            text_cat(t, r == 1 ? " HIT" : " HITS");
+            app_say("RETRIG", t);
+        } else {
+            set.ms.swing = (uint8_t)clamp((int32_t)set.ms.swing + accel(EN_ALGO, e, 2, 4), 0, 100);
+            dirty();
+            int_text(set.ms.swing, t);
+            text_cat(t, "%");
+            app_say("SWING", t);
+        }
     }
-    if ((e = plat_enc(EN_PRESET)) != 0)
-        preset_load(e > 0 ? 1 : -1);
+    if ((e = plat_enc(EN_PRESET)) != 0) {
+        if (ui.held >= 0) {              /* the step's locks cleared */
+            uint32_t k;
+            for (k = 0; k < 4u; k++)
+                TR.lock[ui.held][k] = NO_LOCK;
+            ui.held_edit = 1;
+            knobs_sync();
+            dirty();
+            app_say("LOCKS", "CLEARED");
+        } else {
+            preset_load(e > 0 ? 1 : -1);
+        }
+    }
     if (keys != ui.keys || btn != ui.btn)
         ui.redraw = 1;
     ui.keys = keys;
@@ -418,20 +650,29 @@ static void lights(void)
 {
     uint32_t lit = 0, mid = 0, dim = 0, i, btn = 0, dimb;
     int32_t s = eng_step();
-    for (i = 0; i < 16u; i++) {          /* the picked machine's steps: accents lit, steps half */
-        uint32_t bit = 1u << WK[i];
-        if (TR.steps >> i & 1u) {
-            if (TR.acc >> i & 1u)
-                lit |= bit;
+    static const uint8_t PAGE_BTN[NPAGES] = {B_HOME, B_SEL, B_ENV, B_LFO, B_EDIT, B_FX, B_FX, B_GLO};
+    if (ui.perf) {                       /* the pads: held lit, the others glow */
+        for (i = 0; i < 16u; i++)
+            if (ui.pads >> i & 1u)
+                lit |= 1u << WK[i];
             else
-                mid |= bit;
+                dim |= 1u << WK[i];
+    } else {
+        for (i = 0; i < 16u; i++) {      /* the steps shown: accents lit, steps half */
+            uint32_t st = i + 16u * ui.view, bit = 1u << WK[i];
+            if (TR.steps >> st & 1u) {
+                if (TR.acc >> st & 1u)
+                    lit |= bit;
+                else
+                    mid |= bit;
+            }
         }
+        if (s >= 0 && (s >> 4) == ui.view)   /* the step under way: lit, or out if it plays */
+            lit ^= 1u << WK[s & 15];
     }
-    if (s >= 0)                          /* the step under way: lit, or out if it plays (it flickers past) */
-        lit ^= 1u << WK[s];
     for (i = 0; i < NMACHINES; i++) {    /* the machines: the picked one lit, a hit flashes, the others glow */
         uint32_t bit = 1u << BK[i];
-        if (!MACHINES[i].ready || (ui.muted >> i & 1u))
+        if (ui.muted >> i & 1u)
             continue;
         if (i == set.sel || eng_env((int)i) > 0.3f)
             lit |= bit;
@@ -440,7 +681,13 @@ static void lights(void)
     }
     if (ui.playing)
         btn |= LED_PLAY_GREEN;
-    dimb = (1u << B_PLAY) | (1u << B_REC) | (1u << B_SEQ) | (1u << B_OCTDN) | (1u << B_OCTUP);
+    btn |= 1u << PAGE_BTN[ui.page];
+    if (ui.perf)
+        btn |= 1u << B_ARP;
+    dimb = (1u << B_PLAY) | (1u << B_REC) | (1u << B_SEQ) | (1u << B_SAVE) | (1u << B_ARP) | (1u << B_FX)
+           | (1u << B_SEL) | (1u << B_ENV) | (1u << B_LFO) | (1u << B_EDIT) | (1u << B_GLO) | (1u << B_HOME);
+    if (set.ms.length == 32u)
+        dimb |= (1u << B_OCTDN) | (1u << B_OCTUP);
     plat_lights(btn | (ui.btn & ~(1u << B_PLAY)), lit, dimb, dim, 1);
     plat_lights_mid(0, mid & ~lit);
 }
@@ -448,7 +695,7 @@ static void lights(void)
 void app_input_only(void) { input(); }
 
 /* ------------------------------------------------------------------ drawing --- */
-static uint16_t dim_of(uint16_t c)       /* a machine's colour at about a third */
+static uint16_t dim_of(uint16_t c)       /* a colour at about a third */
 {
     uint32_t r = (c >> 11) & 31u, g = (c >> 5) & 63u, b = c & 31u;
     return (uint16_t)(((r * 3u / 8u) << 11) | ((g * 3u / 8u) << 5) | (b * 3u / 8u));
@@ -459,8 +706,7 @@ static void ctext(int32_t cx, int32_t y, const felucca_font_t *f, const char *s,
     cv_text(cx - text_w(f, s) / 2, y, f, s, c);
 }
 
-/* the rack: six modules; the picked one framed in its colour, each flashing with its hits; muted ones crossed out,
- * the coming ones grey */
+/* the rack: six modules; the picked one framed in its colour, each flashing with its hits; muted ones crossed out */
 static void draw_rack(int32_t y)
 {
     uint32_t i;
@@ -469,45 +715,156 @@ static void draw_rack(int32_t y)
         int32_t x = 3 + (int32_t)i * 39;
         float env = eng_env((int)i);
         int sel = i == set.sel, mute = ui.muted >> i & 1u;
-        if (!m->ready) {
-            cv_rect(x, y, 37, 26, C_LINE);
-            cv_rect(x + 1, y + 1, 35, 24, C_BLACK);
-            ctext(x + 18, y + 8, &FONT_XS, m->name, C_DIM);
-            continue;
-        }
-        cv_rect(x, y, 37, 26, sel ? m->rgb : env > 0.25f ? dim_of(m->rgb) : C_LINE);
-        cv_rect(x + (sel ? 2 : 1), y + (sel ? 2 : 1), sel ? 33 : 35, sel ? 22 : 24, C_BLACK);
+        cv_rect(x, y, 37, 24, sel ? m->rgb : env > 0.25f ? dim_of(m->rgb) : C_LINE);
+        cv_rect(x + (sel ? 2 : 1), y + (sel ? 2 : 1), sel ? 33 : 35, sel ? 20 : 22, C_BLACK);
         if (!mute)
-            cv_rect(x + 4, y + 18, (int32_t)(29.0f * fm_clampf(env * 1.4f, 0.0f, 1.0f)), 3, m->rgb);
-        ctext(x + 18, y + 5, &FONT_XS, m->name, mute ? C_DIM : sel ? C_WHITE : C_GRAY);
+            cv_rect(x + 4, y + 17, (int32_t)(29.0f * fm_clampf(env * 1.4f, 0.0f, 1.0f)), 3, m->rgb);
+        ctext(x + 18, y + 4, &FONT_XS, m->name, mute ? C_DIM : sel ? C_WHITE : C_GRAY);
         if (mute)
-            cv_line(x + 4, y + 21, x + 32, y + 4, C_GRAY);
+            cv_line(x + 4, y + 19, x + 32, y + 4, C_GRAY);
     }
 }
 
-/* one knob: its name, a bar 0..127 with the sweetspots as ticks, the value, and the zone it is on (lit) or near (dim) */
-static void draw_knob(int k, int32_t x, int32_t y, uint32_t now)
+/* one knob: its name, a bar 0..127 with the sweetspots as ticks (a bipolar one from the middle), the value, the zone
+ * it is on (lit) or near (dim); the modulation on a SOUND macro as a white mark; a p-lock in white */
+static void draw_knob(int k, int32_t x, int32_t y, uint32_t now, uint16_t col)
 {
-    const macro_t *mc = &MC.macro[k];
-    int32_t v = TR.m[k], w = 54, z = zone_at(mc, v), zn = zone_near(mc, v), fill = (v * (w - 2)) / 127;
+    const macro_t *mc = page_knob(k);
+    int32_t v = knob_val(k), w = 54, z = zone_at(mc, v), zn = zone_near(mc, v), fill = (v * (w - 2)) / 127;
     uint32_t i;
-    int hot = ui.knob_at[k] && now - ui.knob_at[k] < 600u;
+    int hot = ui.knob_at[k] && now - ui.knob_at[k] < 600u, lock = locking() && TR.lock[ui.held][k] != NO_LOCK;
+    int bip = mc->nzones == 5 && mc->centre[2] == 64 && mc->centre[0] == 4;
     char t[8];
-    cv_text(x, y, &FONT_XS, mc->name, hot ? C_WHITE : C_GRAY);
-    int_text(v, t);
-    cv_text(x + w - text_w(&FONT_XS, t), y, &FONT_XS, t, hot ? C_HI : C_AMB);
+    cv_text(x, y, &FONT_XS, mc->name, lock ? C_WHITE : hot ? C_WHITE : C_GRAY);
     cv_rect(x, y + 14, w, 8, C_LINE);
-    cv_rect(x + 1, y + 15, fill, 6, z >= 0 ? MC.rgb : C_HI);
+    if (bip) {
+        int32_t c = x + w / 2, f = ((v - 64) * (w / 2 - 1)) / 63;
+        if (f >= 0)
+            cv_rect(c, y + 15, f, 6, z >= 0 ? col : C_HI);
+        else
+            cv_rect(c + f, y + 15, -f, 6, z >= 0 ? col : C_HI);
+    } else {
+        cv_rect(x + 1, y + 15, fill, 6, lock ? C_WHITE : z >= 0 ? col : C_HI);
+    }
     for (i = 0; i < mc->nzones; i++) {   /* the sweetspots */
         int32_t tx = x + 1 + (mc->centre[i] * (w - 3)) / 127;
-        cv_rect(tx, y + 11, 1, 3, (int)i == z ? MC.rgb : C_GRAY);
+        cv_rect(tx, y + 11, 1, 3, (int)i == z ? col : C_GRAY);
     }
-    ctext(x + w / 2, y + 26, &FONT_XS, mc->zone[z >= 0 ? z : zn], z >= 0 ? C_WHITE : C_DIM);
+    if (ui.page == PG_SOUND) {           /* the modulation now */
+        int8_t md[4];
+        int32_t mv;
+        eng_mod(set.sel, md);
+        if (md[k]) {
+            mv = clamp(v + md[k], 0, 127);
+            cv_rect(x + 1 + (mv * (w - 3)) / 127, y + 13, 2, 10, C_WHITE);
+        }
+    }
+    if (hot && z < 0) {                  /* turning between zones: the value */
+        int_text(bip ? v - 64 : v, t);
+        ctext(x + w / 2, y + 26, &FONT_XS, t, C_HI);
+    } else {
+        ctext(x + w / 2, y + 26, &FONT_XS, zone_name(mc, z >= 0 ? z : zn), z >= 0 ? C_WHITE : C_DIM);
+    }
+}
+
+static void draw_page(uint32_t now)      /* the page's knobs, and a line under them */
+{
+    uint32_t i;
+    char t[32];
+    uint16_t col = ui.page >= PG_FX ? C_HI : MC.rgb;
+    for (i = 0; i < 4u; i++)
+        draw_knob((int)i, 4 + (int32_t)i * 59, 38, now, col);
+    if (ui.held >= 0) {                  /* a step held: its number, condition, retrigs */
+        int32_t r = TR.retrig[ui.held] < 2u ? 1 : TR.retrig[ui.held];
+        t[0] = 0;
+        text_cat(t, "STEP ");
+        int_text(ui.held + 1, t + 5);
+        cv_text(4, 82, &FONT_XS, t, C_WHITE);
+        cv_text(60, 82, &FONT_XS, COND_NAME[TR.cond[ui.held]], C_HI);
+        t[0] = 'x';
+        int_text(r, t + 1);
+        cv_text(130, 82, &FONT_XS, t, C_HI);
+        cv_text(236 - text_w(&FONT_XS, "LOCKS"), 82, &FONT_XS, "LOCKS", ui.page == PG_SOUND ? C_AMB : C_DIM);
+        return;
+    }
+    if (ui.page == PG_SOUND) {
+        cv_text(4, 82, &FONT_XS, "PRESET", C_DIM);
+        cv_text(48, 82, &FONT_XS, MC.preset[TR.preset].name, C_AMB);
+    } else {
+        cv_text(4, 82, &FONT_XS, PAGE_NAME[ui.page], C_HI);
+        if (ui.page < PG_FX)
+            cv_text(10 + text_w(&FONT_XS, PAGE_NAME[ui.page]), 82, &FONT_XS, MC.name, MC.rgb);
+        if (ui.page == PG_GLO && set.ms.has_scene)
+            cv_text(100, 82, &FONT_XS, "SCENE B SET", C_AMB);
+    }
+    t[0] = 0;
+    text_cat(t, "SWING ");
+    int_text(set.ms.swing, t + 6);
+    text_cat(t, "%");
+    cv_text(236 - text_w(&FONT_XS, t), 82, &FONT_XS, t, C_AMB);
+}
+
+static void draw_steps(int32_t s)        /* the page of steps shown, in the machine's colour; the others' hits as marks */
+{
+    uint32_t i, j;
+    for (i = 0; i < 16u; i++) {
+        int32_t st = (int32_t)i + 16 * ui.view, x = 6 + (int32_t)(i % 8u) * 29, y = 10 + (int32_t)(i / 8u) * 36;
+        int32_t mx = x + 3;
+        int on = TR.steps >> st & 1u, acc = on && (TR.acc >> st & 1u);
+        uint16_t c = acc ? MC.rgb : on ? dim_of(MC.rgb) : C_LINE;
+        if (st >= len_steps()) {
+            cv_rect(x, y, 25, 28, C_BLACK);
+            continue;
+        }
+        cv_rect(x, y, 25, 28, st == ui.held ? C_WHITE : c);
+        if (!on || st == ui.held)
+            cv_rect(x + 1, y + 1, 23, 26, on ? c : C_BLACK);
+        if (acc)
+            cv_rect(x + 4, y + 4, 17, 3, C_WHITE);
+        if (on) {                        /* a lock, a condition, retrigs */
+            uint32_t k;
+            int lk = 0;
+            for (k = 0; k < 4u; k++)
+                if (TR.lock[st][k] != NO_LOCK)
+                    lk = 1;
+            if (lk)
+                cv_rect(x + 19, y + 10, 4, 4, C_WHITE);
+            if (TR.cond[st])
+                cv_rect(x + 3, y + 10, 4, 4, C_BLACK);
+            for (k = 1; k < TR.retrig[st]; k++)
+                cv_rect(x + 3 + (int32_t)k * 4, y + 16, 2, 3, C_WHITE);
+        }
+        for (j = 0; j < NMACHINES; j++)  /* the others */
+            if (j != set.sel && (set.tr[j].steps >> st & 1u)) {
+                cv_rect(mx, y + 22, 3, 3, (ui.muted >> j & 1u) ? C_DIM : MACHINES[j].rgb);
+                mx += 4;
+            }
+        if (st == s)
+            cv_rect(x, y + 30, 25, 3, C_WHITE);
+        else if (i % 4u == 0)
+            cv_rect(x, y + 30, 3, 3, C_DIM);
+    }
+}
+
+static void draw_pads(void)              /* PERF mode: the sixteen pads, held ones lit */
+{
+    uint32_t i;
+    float b = eng_build();
+    for (i = 0; i < 16u; i++) {
+        int32_t x = 6 + (int32_t)(i % 8u) * 29, y = 10 + (int32_t)(i / 8u) * 36;
+        int on = ui.pads >> i & 1u;
+        cv_rect(x, y, 25, 28, on ? C_HI : C_LINE);
+        if (!on)
+            cv_rect(x + 1, y + 1, 23, 26, C_BLACK);
+        ctext(x + 13, y + 9, &FONT_XS, PAD_SHORT[i], on ? C_BLACK : C_GRAY);
+        if (i == P_BUILD && b > 0.0f)
+            cv_rect(x + 2, y + 24, (int32_t)(21.0f * b), 2, on ? C_BLACK : C_HI);
+    }
 }
 
 static void draw(void)
 {
-    uint32_t now = plat_ms(), i, j;
+    uint32_t now = plat_ms();
     int32_t s = eng_step();
     char t[24];
     /* header: the name, or a message; the tempo and the transport */
@@ -516,63 +873,40 @@ static void draw(void)
         int32_t x = cv_text(8, 6, &FONT_B, ui.msg[0], C_WHITE);
         cv_text(x + 8, 6, &FONT_B, ui.msg[1], C_HI);
     } else {
+        int32_t i;
         cv_text(8, 6, &FONT_B, "SIX MACHINES", MACHINES[M_KICK].rgb);
-        int_text(set.bpm, t);
+        int_text(set.ms.bpm, t);
         text_cat(t, " BPM");
         cv_text(200 - text_w(&FONT_XS, t), 10, &FONT_XS, t, C_AMB);
-        if (ui.playing) {                /* a triangle: playing */
-            for (i = 0; i < 6u; i++)
-                cv_rect(214 + (int32_t)i, 9 + (int32_t)i, 1, 12 - 2 * (int32_t)i, C_HI);
-        } else {
+        if (ui.playing)
+            for (i = 0; i < 6; i++)
+                cv_rect(214 + i, 9 + i, 1, 12 - 2 * i, C_HI);
+        else
             cv_rect(213, 9, 10, 10, C_DIM);
-        }
     }
     cv_rect(0, 29, 240, 1, C_LINE);
     cv_blit(0, 0);
-    /* the rack, and the knobs (or a sweetspot just reached, big) */
+    /* the rack, and the page's knobs (or a sweetspot just reached, big) */
     cv_begin(240, 110, C_BLACK);
     draw_rack(4);
     if (now < ui.zone_until && ui.zone_k >= 0) {
-        const macro_t *mc = &MC.macro[ui.zone_k];
-        ctext(120, 40, &FONT_XS, mc->name, C_GRAY);
-        ctext(120, 54, &APP_BIG_FONT, mc->zone[ui.zone_z], MC.rgb);
-        cv_rect(60, 96, 120, 2, MC.rgb);
+        const macro_t *mc = page_knob(ui.zone_k);
+        uint16_t col = ui.page >= PG_FX ? C_HI : MC.rgb;
+        ctext(120, 38, &FONT_XS, mc->name, C_GRAY);
+        ctext(120, 52, &APP_BIG_FONT, zone_name(mc, ui.zone_z), col);
+        cv_rect(60, 94, 120, 2, col);
     } else {
-        for (i = 0; i < 4u; i++)
-            draw_knob((int)i, 4 + (int32_t)i * 59, 40, now);
-        cv_text(4, 84, &FONT_XS, "PRESET", C_DIM);
-        cv_text(48, 84, &FONT_XS, MC.preset[TR.preset].name, C_AMB);
-        t[0] = 0;
-        text_cat(t, "SWING ");
-        int_text(set.swing, t + 6);
-        text_cat(t, "%");
-        cv_text(236 - text_w(&FONT_XS, t), 84, &FONT_XS, t, C_AMB);
+        draw_page(now);
     }
     cv_blit(0, 30);
-    /* the picked machine's 16 steps, two rows of eight, in its colour; the other machines' hits as small marks at the
-     * cell's top; the step under way lit white */
+    /* the steps, or the pads */
     cv_begin(240, 100, C_BLACK);
     cv_rect(0, 0, 240, 1, C_LINE);
-    for (i = 0; i < 16u; i++) {
-        int32_t x = 6 + (int32_t)(i % 8u) * 29, y = 10 + (int32_t)(i / 8u) * 36, mx = x + 3;
-        int on = TR.steps >> i & 1u, acc = on && (TR.acc >> i & 1u);
-        uint16_t c = acc ? MC.rgb : on ? dim_of(MC.rgb) : C_LINE;
-        cv_rect(x, y, 25, 28, c);
-        if (!on)
-            cv_rect(x + 1, y + 1, 23, 26, C_BLACK);
-        if (acc)
-            cv_rect(x + 4, y + 4, 17, 3, C_WHITE);
-        for (j = 0; j < NMACHINES; j++)  /* the others */
-            if (j != set.sel && MACHINES[j].ready && (set.tr[j].steps >> i & 1u)) {
-                cv_rect(mx, y + 22, 4, 3, (ui.muted >> j & 1u) ? C_DIM : MACHINES[j].rgb);
-                mx += 6;
-            }
-        if ((int32_t)i == s)
-            cv_rect(x, y + 30, 25, 3, C_WHITE);
-        else if (i % 4u == 0)
-            cv_rect(x, y + 30, 3, 3, C_DIM);   /* the beats */
-    }
-    /* the audio load (the render's share of its time) and the dropouts since the start: never more than a glance */
+    if (ui.perf)
+        draw_pads();
+    else
+        draw_steps(s);
+    /* the audio load and dropouts; the steps' page; the machine */
     t[0] = 0;
     text_cat(t, "CPU ");
     int_text((int32_t)plat_cpu_pct(), t + 4);
@@ -582,20 +916,25 @@ static void draw(void)
         if (plat_xruns()) {
             char d[16] = "DROPS ";
             int_text((int32_t)plat_xruns(), d + 6);
-            cv_text(x + 10, 84, &FONT_XS, d, C_WHITE);
+            x = cv_text(x + 8, 84, &FONT_XS, d, C_WHITE);
         }
+        if (set.ms.length == 32u && !ui.perf)
+            cv_text(x + 10, 84, &FONT_XS, ui.view ? "17-32" : "1-16", C_AMB);
     }
-    cv_text(234 - text_w(&FONT_XS, MC.name), 84, &FONT_XS, MC.name, MC.rgb);
+    cv_text(234 - text_w(&FONT_XS, ui.perf ? "PADS" : MC.name), 84, &FONT_XS, ui.perf ? "PADS" : MC.name,
+            ui.perf ? C_HI : MC.rgb);
     cv_blit(0, 140);
 }
 
 /* ------------------------------------------------------------- the contract --- */
 void app_init(void)
 {
+    plat_cpu2_set(1);                    /* the second core renders half the machines (if it cannot: all on one) */
     eng_init();
     settings_load();
-    knobs_from_settings();
-    apply();
+    eng_bind(set.tr, &set.ms);
+    ui.held = -1;
+    knobs_sync();
 }
 
 void app_render(int32_t *lr, uint32_t n, uint32_t master_q12)
@@ -620,10 +959,9 @@ void app_splash(void)                    /* the rack, powered: the name over six
     cv_begin(240, 80, C_BLACK);
     for (i = 0; i < NMACHINES; i++) {
         int32_t x = 3 + (int32_t)i * 39;
-        uint16_t c = MACHINES[i].ready ? MACHINES[i].rgb : RGB(70, 70, 78);
-        cv_rect(x, 6, 37, 26, c);
+        cv_rect(x, 6, 37, 26, MACHINES[i].rgb);
         cv_rect(x + 2, 8, 33, 22, C_BLACK);
-        ctext(x + 18, 13, &FONT_XS, MACHINES[i].name, MACHINES[i].ready ? C_WHITE : RGB(120, 120, 128));
+        ctext(x + 18, 13, &FONT_XS, MACHINES[i].name, C_WHITE);
     }
     ctext(120, 52, &FONT_XS, "by swtdr34mz", RGB(150, 150, 158));
     cv_blit(0, 140);
@@ -633,6 +971,7 @@ void app_ui_init(void)
 {
     lcd_fill(0, 0, 240, 240, C_BLACK);
     ui.zone_k = -1;
+    ui.held = -1;
     ui.step_drawn = -2;
     ui.redraw = 1;
 }
@@ -648,7 +987,7 @@ void app_frame(void)
         char t[64] = "SIX MACHINES. ";
         text_cat(t, MC.name);
         text_cat(t, ". ");
-        text_cat(t, MC.preset[TR.preset].name);
+        text_cat(t, ui.page == PG_SOUND ? MC.preset[TR.preset].name : PAGE_NAME[ui.page]);
         ann_say(t, 0, ANN_NOW);
     }
     ann_tick(now);
@@ -661,6 +1000,10 @@ void app_frame(void)
         ui.hit_drawn = hit;
         ui.redraw = 1;
     }
+    if (ui.page == PG_SOUND && (TR.env[0] != 64u || TR.lfo[1] != 64u))
+        ui.redraw = 1;                   /* the modulation marks move */
+    if (eng_build() > 0.0f)
+        ui.redraw = 1;
     if ((ui.msg_until && now >= ui.msg_until) || (ui.zone_until && now >= ui.zone_until)) {
         if (now >= ui.msg_until)
             ui.msg_until = 0;
@@ -695,8 +1038,8 @@ void app_backup_hold(int on) { (void)on; }
 void app_backup_restored(void)
 {
     settings_load();
-    knobs_from_settings();
-    apply();
+    eng_bind(set.tr, &set.ms);
+    knobs_sync();
     ui.redraw = 1;
 }
 
@@ -704,21 +1047,31 @@ void app_backup_restored(void)
 int app_expect(const char *what, int *got)
 {
     if (!strcmp(what, "steps"))          /* the picked machine's */
-        *got = TR.steps;
+        *got = (int)TR.steps;
     else if (!strcmp(what, "acc"))
-        *got = TR.acc;
+        *got = (int)TR.acc;
     else if (!strcmp(what, "sel"))
         *got = set.sel;
+    else if (!strcmp(what, "page"))
+        *got = ui.page;
+    else if (!strcmp(what, "perf"))
+        *got = ui.perf;
+    else if (!strcmp(what, "pads"))
+        *got = (int)ui.pads;
     else if (!strcmp(what, "muted"))
         *got = ui.muted;
     else if (!strcmp(what, "bpm"))
-        *got = set.bpm;
+        *got = set.ms.bpm;
     else if (!strcmp(what, "swing"))
-        *got = set.swing;
+        *got = set.ms.swing;
+    else if (!strcmp(what, "length"))
+        *got = set.ms.length;
+    else if (!strcmp(what, "view"))
+        *got = ui.view;
+    else if (!strcmp(what, "scene"))
+        *got = set.ms.has_scene;
     else if (!strcmp(what, "preset"))
         *got = TR.preset;
-    else if (!strcmp(what, "level"))
-        *got = TR.level;
     else if (!strcmp(what, "playing"))
         *got = ui.playing;
     else if (!strcmp(what, "step"))
@@ -728,11 +1081,19 @@ int app_expect(const char *what, int *got)
     else if (!strcmp(what, "dirty"))
         *got = set_dirty;
     else if (!strncmp(what, "steps", 5) && what[5] >= '0' && what[5] <= '5')   /* steps0..5: a machine's */
-        *got = set.tr[what[5] - '0'].steps;
+        *got = (int)set.tr[what[5] - '0'].steps;
     else if (what[0] == 'm' && what[1] >= '1' && what[1] <= '4' && !what[2])   /* m1..m4: the picked machine's macros */
         *got = TR.m[what[1] - '1'];
+    else if (what[0] == 'k' && what[1] >= '1' && what[1] <= '4' && !what[2])   /* k1..k4: the knobs' values now */
+        *got = knob_val(what[1] - '1');
+    else if (!strncmp(what, "lock", 4) && what[4] >= '1' && what[4] <= '4')   /* lockK.S: step S's lock on macro K */
+        *got = TR.lock[atoi(what + 6) - 1][what[4] - '1'];
+    else if (!strncmp(what, "cond", 4))  /* condS, retrigS */
+        *got = TR.cond[atoi(what + 4) - 1];
+    else if (!strncmp(what, "retrig", 6))
+        *got = TR.retrig[atoi(what + 6) - 1];
     else if (!strncmp(what, "zone", 4) && what[4] >= '1' && what[4] <= '4')   /* zone1..4: on a sweetspot (-1 not) */
-        *got = zone_at(&MC.macro[what[4] - '1'], TR.m[what[4] - '1']);
+        *got = zone_at(page_knob(what[4] - '1'), knob_val(what[4] - '1'));
     else
         return 0;
     return 1;

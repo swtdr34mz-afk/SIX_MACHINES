@@ -10,74 +10,91 @@ lights up. Turn it fast and it runs past them. Wherever a knob stands, the sound
 
 ![SIX MACHINES](site/img/screen-main.png) ![A sweetspot](site/img/screen-sweetspot.png)
 
-## Version 0.2: KICK, SNARE, HATS
+## The six machines
 
-![SNARE](site/img/screen-snare.png)
+| Machine | K1 | K2 | K3 | K4 | Presets |
+| --- | --- | --- | --- | --- | --- |
+| **KICK** (sine, pitch sweep, click, drive, folder) | TUNE: SUB, DEEP, 808, TIGHT | PUNCH: SOFT, SYNTAKT, TECHNO, ZAP | BOOM: TIGHT, SYNTAKT, 808, DRONE | GRIT: CLEAN, WARM, RUMBLE, FOLD, DESTROY | SYNTAKT DEEP, 808 CLASSIC, WAREHOUSE, PSY ZAP |
+| **SNARE** (tuned body + noise band) | TUNE: FAT, SYNTAKT, TIGHT, PICCOLO | SNAP: BRUSH, SYNTAKT, CRACK, RIMSHOT | BODY: NOISY, SYNTAKT, FAT, TONE | RATTLE: DRY, SYNTAKT, TRAP, GATED, DIRT | SYNTAKT SD, TRAP SNARE, GATED 80S, RIMSHOT |
+| **TOMS** (bent membrane, FM skin) | TUNE: FLOOR, LOW, HIGH, TIMBAL | BEND: FLAT, SYNTAKT, DROP, SIMMONS | DECAY: SHORT, SYNTAKT, RING, BOOM | SKIN: SOFT, SYNTAKT, WOOD, METAL | SYNTAKT TOM, FLOOR BOOM, SIMMONS, WOOD BLOCK |
+| **METAL** (three FM pairs at cymbal ratios) | TUNE: LOW, MID, HIGH, SPLASH | RING: RIDE, CRASH, GONG, BELL, INDUSTRY | DECAY: CHOKE, SHORT, RIDE, CRASH, WASH | SHIMMER: DARK, SILK, SHINE, SIZZLE | FM RIDE, FM CRASH, GONG, INDUSTRIAL |
+| **HATS** (808 metal + noise) | TUNE: LOW, 808, HIGH, TINY | DECAY: TICK, CLOSED, HALF, OPEN, WASH | METAL: NOISE, SYNTAKT, 808, RING | CRISP: SOFT, CRISP, SIZZLE, HARSH | SYNTAKT HH, 808 HAT, OPEN WASH, TICK |
+| **CLAP** (hands, rim, cowbell) | TUNE: LOW, 909, 808, HIGH | SPREAD: SINGLE, TIGHT, 909, CROWD | ROOM: DRY, SHORT, ROOM, HALL | MORPH: CLAP, RIM, COWBELL | 909 CLAP, 808 CLAP, RIM CLICK, COWBELL |
 
-**KICK**
+The macros are coupled (a high kick sweeps shorter, a high snare or tom rings shorter, the hats' and the metal's
+filters follow their pitch), and the character knobs keep the loudness even (measured).
 
-| Knob | Macro | Moves | Sweetspots |
+## Pages
+
+Each machine has five pages of four knobs; the master has three. Every knob has its sweetspots.
+
+| Button | Page | K1 | K2 | K3 | K4 |
+| --- | --- | --- | --- | --- | --- |
+| HOME | **SOUND** (the machine) | its four macros | | | |
+| SEL | **SAT** | TYPE: TAPE, TUBE, FOLD, CRUSH | AMOUNT: OFF, LIGHT, HOT, MAX | TONE: DARK, OPEN, BRIGHT | MIX: DRY, HALF, WET |
+| ENV | **ENV** (modulates a macro at each hit) | DEPTH: -MAX .. OFF .. +MAX | ATTACK: SNAP, SOFT, SWELL, SLOW | DECAY: SHORT, MID, LONG, HOLD | TARGET: the machine's K1..K4 |
+| LFO | **LFO** (synced to the tempo) | RATE: 4 BARS, 1 BAR, 1/4, 1/8, 1/16 | DEPTH: -MAX .. OFF .. +MAX | WAVE: SINE, TRI, SAW, SQUARE, S&H | TARGET: the machine's K1..K4 |
+| EDIT | **MIX** | LEVEL: SOFT, MIX, FULL, HOT | PAN: LEFT .. CENTER .. RIGHT | REVERB: DRY, TOUCH, ROOM, WET, DROWN | DELAY: DRY, TOUCH, ECHO, WET, DUB |
+| FX | **MASTER** | COMP: OFF, GLUE, PUNCH, PUMP (ducks under the kick) | WARMTH: CLEAN, TAPE, HOT, CRUSHED | TILT: DARK, FLAT, BRIGHT | SPACE (reverb): ROOM, PLATE, HALL, CAVE |
+| FX again | **DELAY** (ping-pong) | TIME: 1/16, 1/8, 3/16, 1/4 | FEEDBK: SHORT, ECHO, DUB, LOOP | TONE: DARK, TAPE, CLEAR | RETURN (reverb and delay): OFF, LOW, MIX, LOUD |
+| GLO | **PERFORM** | FILTER (DJ): LP MAX, LP, OPEN, HP, HP MAX | SCENE: A, HALF, B | BUILD (its length): 1, 2, 4 BARS | RES: SOFT, ACID, SCREAM |
+
+The same page button again goes back to SOUND. On the SOUND page a white mark on a knob's bar shows where its ENV and
+LFO move it now.
+
+## The sequencer
+
+- **Steps:** the white keys are the picked machine's 16 steps. A tap turns a step on, again ACCENT, again off.
+- **32 steps:** SEQ switches 16 / 32 (the first time, the first 16 are copied into the second half). OCT- / OCT+
+  show steps 1-16 / 17-32.
+- **Parameter locks:** hold a step and turn K1..K4 (SOUND page): the step plays with those values, the next trig
+  without. A white dot marks a locked step. Hold a step and turn PRESET: its locks are gone.
+- **Trig conditions:** hold a step and turn SELECT: ALWAYS, 1:2, 2:2, 1:4, 2:4, 3:4, 4:4, 50%, 25%, 75%, FILL,
+  NOT FILL, FIRST.
+- **Retrigs:** hold a step and turn ALGORITHM: 1 to 4 hits in the step, each a little softer.
+- **Mutes:** SEQ held + a black key.
+
+## Performance
+
+**ARP** turns PERF mode on: the 16 white keys become pads, each active while held.
+
+| Pad | | Pad | |
 | --- | --- | --- | --- |
-| K1 | **TUNE** | the tone (30 to 80 Hz), the sweep's length, the deep tail | SUB (D1), DEEP (G1), 808 (A1), TIGHT (C2) |
-| K2 | **PUNCH** | the pitch sweep's depth and time, the click | SOFT, SYNTAKT, TECHNO, ZAP |
-| K3 | **BOOM** | the body's length, the deep tail, the 808 glide down | TIGHT, SYNTAKT, 808, DRONE |
-| K4 | **GRIT** | drive, wavefolder, tone, bitcrusher, at an even loudness | CLEAN, WARM, RUMBLE, FOLD, DESTROY |
+| 1 | REPEAT 1/4 | 9 | KILL LOW |
+| 2 | REPEAT 1/8 | 10 | KILL MID |
+| 3 | REPEAT 1/16 | 11 | KILL HIGH |
+| 4 | REPEAT 1/32 | 12 | FILL (the FILL conditions play) |
+| 5 | TAPE STOP (let go: it comes back in) | 13 | SCENE B (morph to it while held) |
+| 6 | BUILD-UP (a snare roll, a rising high-pass; let go: the drop) | 14 | BREAK (no kick) |
+| 7 | REVERB THROW | 15 | FREEZE (the delay holds its loop) |
+| 8 | DELAY THROW | 16 | DROP (from the top, with a crash) |
 
-Presets: SYNTAKT DEEP, 808 CLASSIC, WAREHOUSE, PSY ZAP.
-
-**SNARE**: a tuned body (two sines at the drum's modes, a short pitch drop) and a noise band with its own decay.
-
-| Knob | Macro | Moves | Sweetspots |
-| --- | --- | --- | --- |
-| K1 | **TUNE** | the body's pitch (120 to 380 Hz), the noise's colour with it | FAT, SYNTAKT, TIGHT, PICCOLO |
-| K2 | **SNAP** | the pitch drop, the click, a darker noise for brushes, less noise for rimshots | BRUSH, SYNTAKT, CRACK, RIMSHOT |
-| K3 | **BODY** | tone against noise, the body's length | NOISY, SYNTAKT, FAT, TONE |
-| K4 | **RATTLE** | the noise's length, colour, a gate, drive | DRY, SYNTAKT, TRAP, GATED, DIRT |
-
-Presets: SYNTAKT SD, TRAP SNARE, GATED 80S, RIMSHOT.
-
-**HATS**: six square oscillators at the 808's spacings and white noise, a resonant high-pass.
-
-| Knob | Macro | Moves | Sweetspots |
-| --- | --- | --- | --- |
-| K1 | **TUNE** | the metal's pitch, the filter with it | LOW, 808, HIGH, TINY |
-| K2 | **DECAY** | from a tick to a wash | TICK, CLOSED, HALF, OPEN, WASH |
-| K3 | **METAL** | noise against metal, ring modulation | NOISE, SYNTAKT, 808, RING |
-| K4 | **CRISP** | the high-pass, its resonance, drive | SOFT, CRISP, SIZZLE, HARSH |
-
-Presets: SYNTAKT HH, 808 HAT, OPEN WASH, TICK.
-
-The macros are coupled (a high kick sweeps shorter, a high snare rings shorter, the hats' filter follows their pitch),
-and the character knobs keep the loudness even (measured to within a few dB).
+**Scenes:** SAVE stores scene B: the six machines' SOUND as they are. The SCENE knob (PERFORM page) morphs every machine
+from its sound to scene B; pad 13 jumps there while held. SAVE held 1 s forgets scene B.
 
 ## Controls
 
 | Control | What it does |
 | --- | --- |
-| Black keys | The six machines, left to right: KICK, SNARE, TOMS, METAL, HATS, CLAP. A key picks the machine; while the sequencer is stopped it also plays it (TOMS, METAL and CLAP are coming) |
-| SEQ held + a black key | The machine muted / back |
-| White keys | The picked machine's 16 steps: a tap turns a step on, again ACCENT, again off |
-| K1..K4 | The picked machine's four macros |
-| SELECT | Tempo (60 to 200 BPM) |
-| ALGORITHM | Swing |
-| PRESET | A start preset for the picked machine's four knobs |
+| Black keys | The six machines: KICK, SNARE, TOMS, METAL, HATS, CLAP. A key picks the machine; while the sequencer is stopped it also plays it |
+| White keys | The picked machine's steps (PERF mode: the pads) |
+| K1..K4 | The page's four knobs |
+| SELECT | Tempo (60 to 200 BPM); a step held: its condition |
+| ALGORITHM | Swing; a step held: its retrigs |
+| PRESET | A start preset for the picked machine; a step held: its locks cleared |
+| HOME, SEL, ENV, LFO, EDIT, FX, GLO | The pages |
+| ARP | PERF mode |
+| SEQ | 16 / 32 steps; held + a black key: a mute |
+| OCT- / OCT+ | Steps 1-16 / 17-32 |
+| SAVE | Scene B stored; held 1 s: gone |
 | PLAY | Start from step 1 / stop |
 | REC held 1 s | Clears the picked machine's pattern |
-| OCT- / OCT+ | The picked machine's level |
 
-The screen shows the picked machine's steps in its colour, the other machines' hits as small marks in theirs.
-Settings, the patterns and the knobs save themselves a few seconds after the last change (mutes are live only).
+The bottom line shows the audio load (CPU %) and, should the sound ever break up, the dropouts. The machines are
+rendered on both of the FM-1's cores (TOMS, METAL, HATS and CLAP on the second); if the second core fails on a unit,
+everything runs on the first.
 
-## Roadmap
-
-1. KICK and the 16-step sequencer (0.1)
-2. SNARE and HATS (0.2, this version)
-3. METAL (FM cymbals), TOMS, CLAP
-4. Sequencer: 32 steps, parameter locks, trig conditions, retrigs
-5. Per track: SAT, ENV, LFO and MIX pages
-6. Master: compressor, saturation, tilt EQ, reverb and delay
-7. Performance FX: filter, beat repeat, tape stop, throws, build-up, kills, scenes
-8. The screen and the intro
+Settings, patterns, pages and scene B save themselves a few seconds after the last change (mutes and pads are live).
 
 ## Building
 
@@ -85,7 +102,7 @@ Settings, the patterns and the knobs save themselves a few seconds after the las
     X0X_FONTSET=terminus python3 fm1-base/tools/build.py . --host
     build/host/sixmachines_host tests/basic.txt build/host
 
-GitHub Actions builds the installable `.fwsc` on every push (Actions tab > the run > Artifacts). A tag `v0.1` makes a
+GitHub Actions builds the installable `.fwsc` on every push (Actions tab > the run > Artifacts). A tag `v0.3` makes a
 release with it.
 
 ## Licence
