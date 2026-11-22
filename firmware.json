@@ -1,0 +1,19 @@
+{
+  "schema": 1,
+  "id": "sixmachines",
+  "name": "SIX MACHINES",
+  "author": "swtdr34mz",
+  "license": "MPL-2.0",
+  "tagline": "A performance drum machine: six machines, four knobs, all sweetspots",
+  "description": "A performance drum machine in the spirit of the Elektron boxes and the LXR-02: six synthesized machines (KICK, SNARE, TOMS, METAL with FM cymbals, HATS, CLAP), each with four macro knobs that rest on sweetspots, its own saturation, envelope, LFO and mix. A sequencer of 16 or 32 steps with accents, parameter locks, trig conditions and retrigs; a master with compressor, warmth, tilt, reverb and ping-pong delay; 16 performance pads (beat repeat, tape stop, build-up and drop, throws, kills, freeze, scene morph).",
+  "tags": ["drum-machine", "synth"],
+  "install": "https://github.com/swtdr34mz-afk/SIX_MACHINES/releases",
+  "source": "https://github.com/swtdr34mz-afk/SIX_MACHINES",
+  "screenshot": "site/img/screen-main.png",
+  "hardware": {
+    "models": ["FM-1"],
+    "flash": ["856014", "B36014"],
+    "features": ["usb-audio-in", "usb-audio-out", "second-core", "screen-reader", "backup"]
+  },
+  "credits": "Built on fm1-base (Charles Vestal) and felucca-bsp (Leo Kuroshita, Hügelton Instruments)."
+}
