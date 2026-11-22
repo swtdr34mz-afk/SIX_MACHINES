@@ -80,9 +80,9 @@ typedef struct {                         /* the master (kept in the settings) */
     uint8_t swing;                       /* 0 .. 100 */
 } master_t;
 
-/* the performance pads (PERF mode: the white keys, held), bit by bit */
+/* the performance pads (PERF mode: the white keys, and the five black keys right of the machines, held), bit by bit */
 enum { P_REP4, P_REP8, P_REP16, P_REP32, P_TAPE, P_BUILD, P_RTHROW, P_DTHROW, P_KLOW, P_KMID, P_KHIGH, P_FILL,
-       P_SCENE, P_BREAK, P_FREEZE, P_DROP, NPADS };
+       P_SCENE, P_BREAK, P_FREEZE, P_DROP, P_GATE, P_HALF, P_LOFI, P_PITCH, P_SWEEP, NPADS };
 extern const char *const PAD_NAME[NPADS];
 
 void eng_init(void);

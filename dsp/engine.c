@@ -97,7 +97,8 @@ const char *const COND_NAME[NCONDS] = {"ALWAYS", "1:2", "2:2", "1:4", "2:4", "3:
                                        "FILL", "NOT FILL", "FIRST"};
 const char *const PAD_NAME[NPADS] = {"REPEAT 1/4", "REPEAT 1/8", "REPEAT 1/16", "REPEAT 1/32", "TAPE STOP",
                                      "BUILD-UP", "REVERB THROW", "DELAY THROW", "KILL LOW", "KILL MID", "KILL HIGH",
-                                     "FILL", "SCENE B", "BREAK", "FREEZE", "DROP"};
+                                     "FILL", "SCENE B", "BREAK", "FREEZE", "DROP", "GATE", "HALF TIME", "LO-FI",
+                                     "PITCH DOWN", "SWEEP"};
 
 /* ============================================================== the helpers === */
 typedef struct {                         /* a curve: breakpoints (x 0..127, y), x rising, straight lines between */
@@ -857,6 +858,9 @@ static struct {
     float dj_mode, dj_on;
     float i_lo[2], i_mid[2], g_lo, g_mid, g_hi, t_glo, t_gmid, t_ghi;   /* the kills */
     float b_hp_a, b_hp[2], b_gain;       /* build-up */
+    svf_c sw;                            /* SWEEP */
+    svf_s sws[2];
+    float lf_n, lf_s[2], lf_lp[2];       /* LO-FI */
     uint32_t ti;                         /* tape stop */
     float t_speed, t_lag, t_in, t_in_lp[2];
 } fx;
@@ -879,6 +883,8 @@ static uint8_t rep_rt;                   /* 1/32: each repeated hit twice */
 static float build_t, build_len, build_on, build_roll;   /* build-up: elapsed, length (samples) */
 static float scene_x;                    /* the scene morph now 0..1 (smoothed) */
 static uint8_t pads_drop;                /* the drop's crash, due */
+static int32_t half_start = -1;          /* HALF TIME: where it began (-1 off) */
+static float pitch_x, sweep_x, lofi_x, gate_g = 1.0f;   /* PITCH DOWN, SWEEP (0..1 of the way), LO-FI, the gate */
 static float gain_now;
 
 void eng_bind(const track_t *tracks, const master_t *master)
@@ -968,6 +974,8 @@ static void effective(int t, float *e)
         float v = (s->locked && s->lock[k] != NO_LOCK) ? (float)s->lock[k] : (float)tr->m[k];
         if (MST->has_scene)
             v += scene_x * ((float)MST->scene[t][k] - v);
+        if (k == 0)                      /* PITCH DOWN: every machine's TUNE down */
+            v -= 40.0f * pitch_x;
         e[k] = fm_clampf(v + s->mod[k], 0.0f, 127.0f);
     }
 }
@@ -1274,8 +1282,14 @@ static void play_step(int32_t real, uint32_t at)
     int32_t len = MST->length == 32u ? 32 : 16, src = real;
     uint32_t t, bit;
     step_now = real;
-    if (rep_start >= 0)                  /* beat repeat: the window's steps, round */
+    if (rep_start >= 0) {                /* beat repeat: the window's steps, round */
         src = rep_start + (real - rep_start + len) % len % rep_len;
+    } else if (half_start >= 0) {        /* half time: every step twice as long (the odd ones rest) */
+        int32_t d = (real - half_start + len) % len;
+        if (d & 1)
+            return;
+        src = half_start + d / 2;
+    }
     src %= len;
     bit = 1u << src;
     for (t = 0; t < NMACHINES; t++) {
@@ -1344,6 +1358,11 @@ static void pads_block(void)
     }
     if (on >> P_TAPE & 1u)               /* tape stop: held, it winds down */
         fx.t_speed = 1.0f;
+    if (!(p >> P_HALF & 1u))
+        half_start = -1;
+    else if (on >> P_HALF & 1u)
+        half_start = step_now >= 0 ? step_now : 0;
+    pitch_x += ((float)(p >> P_PITCH & 1u) - pitch_x) * 0.15f;
     pads_was = p;
 }
 
@@ -1493,8 +1512,8 @@ static void sequence(uint32_t n, float sb)
 void eng_render(int32_t *lr, uint32_t n, float gain)
 {
     uint32_t i, t;
-    float sb = step_base(), x;
-    int on2;
+    float sb = step_base(), x, bar0, binc;
+    int on2, gate = (pads >> P_GATE & 1u) != 0, lofi = (pads >> P_LOFI & 1u) != 0;
     if (n > BLK_MAX)
         n = BLK_MAX;
     blk_n = n;
@@ -1515,6 +1534,13 @@ void eng_render(int32_t *lr, uint32_t n, float gain)
         play_req = -1;
     }
     pads_block();
+    /* SWEEP: held, the low-pass closes over a bar; let go, it opens in a quarter */
+    if (pads >> P_SWEEP & 1u)
+        sweep_x = fm_minf(sweep_x + (float)n / (16.0f * sb), 1.0f);
+    else
+        sweep_x = fm_maxf(sweep_x - (float)n / (4.0f * sb), 0.0f);
+    if (sweep_x > 0.0f)
+        svf_set(&fx.sw, 18000.0f * fm_exp2f(-sweep_x * 6.0f), 1.6f);
     /* the scene morph: the knob, or B while its pad is held (smoothed) */
     scene_x += (((pads >> P_SCENE & 1u) ? 1.0f : (float)MST->glo[1] / 127.0f) - scene_x) * 0.3f;
     master_block(sb);
@@ -1523,6 +1549,8 @@ void eng_render(int32_t *lr, uint32_t n, float gain)
         retarget((int)t, 0);
     }
     changed = 0;
+    bar0 = bar_pos;
+    binc = 1.0f / (16.0f * sb);
     sequence(n, sb);
     /* the machines: half on the second core, half here; if it cannot, all here */
     on2 = plat_cpu2_on() && plat_cpu2_run(job_machines, 0);
@@ -1647,6 +1675,40 @@ void eng_render(int32_t *lr, uint32_t n, float gain)
         if (fx.g_lo < 0.9999f || fx.g_mid < 0.9999f || fx.g_hi < 0.9999f) {
             L = fx.i_lo[0] * fx.g_lo + (fx.i_mid[0] - fx.i_lo[0]) * fx.g_mid + (L - fx.i_mid[0]) * fx.g_hi;
             R = fx.i_lo[1] * fx.g_lo + (fx.i_mid[1] - fx.i_lo[1]) * fx.g_mid + (R - fx.i_mid[1]) * fx.g_hi;
+        }
+        /* SWEEP */
+        if (sweep_x > 0.0f) {
+            float lp, bp;
+            svf_run(&fx.sw, &fx.sws[0], L, &lp, &bp);
+            L = lp;
+            svf_run(&fx.sw, &fx.sws[1], R, &lp, &bp);
+            R = lp;
+        }
+        /* LO-FI: a quarter of the rate, 6 bits, a low-pass; in and out over a few ms */
+        lofi_x += ((float)lofi - lofi_x) * 0.004f;
+        if (lofi_x > 0.001f) {
+            float a = 0.5f, l, r;
+            fx.lf_n += 1.0f;
+            if (fx.lf_n >= 4.0f) {
+                fx.lf_n = 0.0f;
+                fx.lf_s[0] = fm_floorf(L * 32.0f + 0.5f) * (1.0f / 32.0f);
+                fx.lf_s[1] = fm_floorf(R * 32.0f + 0.5f) * (1.0f / 32.0f);
+            }
+            fx.lf_lp[0] += a * (fx.lf_s[0] - fx.lf_lp[0]);
+            fx.lf_lp[1] += a * (fx.lf_s[1] - fx.lf_lp[1]);
+            l = fx.lf_lp[0];
+            r = fx.lf_lp[1];
+            L += lofi_x * (l - L);
+            R += lofi_x * (r - R);
+        }
+        /* GATE: open the first half of each thirty-second, on the bar's grid */
+        {
+            float ph = (bar0 + (float)i * binc) * 32.0f, tgt;
+            ph -= fm_floorf(ph);
+            tgt = (!gate || ph < 0.5f) ? 1.0f : 0.0f;
+            gate_g += (tgt - gate_g) * 0.08f;
+            L *= gate_g;
+            R *= gate_g;
         }
         /* build-up: the high-pass */
         if (fx.b_hp_a > 0.0f) {

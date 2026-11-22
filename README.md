@@ -56,7 +56,21 @@ LFO move it now.
 
 ## Performance
 
-**ARP** turns PERF mode on: the 16 white keys become pads, each active while held.
+**ARP** turns PERF mode on (as the LXR-02's): the six machines' keys become **mutes** (a press mutes, the next
+unmutes; a muted machine's key goes dark), the 16 white keys become pads, and the five black keys right of the machines
+become **live FX**, each active while held.
+
+| Black key | Live FX |
+| --- | --- |
+| 7 | GATE: a trance gate, the sound chopped in thirty-seconds |
+| 8 | HALF TIME: the beat at half speed, back in time when let go |
+| 9 | LO-FI: a quarter of the sample rate, 6 bits |
+| 10 | PITCH DOWN: every machine tuned down |
+| 11 | SWEEP: a low-pass closing over a bar, opening in a beat when let go |
+
+![PERF mode](site/img/screen-perf.png)
+
+The white pads:
 
 | Pad | | Pad | |
 | --- | --- | --- | --- |
@@ -76,14 +90,14 @@ from its sound to scene B; pad 13 jumps there while held. SAVE held 1 s forgets 
 
 | Control | What it does |
 | --- | --- |
-| Black keys | The six machines: KICK, SNARE, TOMS, METAL, HATS, CLAP. A key picks the machine; while the sequencer is stopped it also plays it |
+| Black keys | The six machines: KICK, SNARE, TOMS, METAL, HATS, CLAP. A key picks the machine; while the sequencer is stopped it also plays it. PERF mode: mutes |
 | White keys | The picked machine's steps (PERF mode: the pads) |
 | K1..K4 | The page's four knobs |
 | SELECT | Tempo (60 to 200 BPM); a step held: its condition |
 | ALGORITHM | Swing; a step held: its retrigs |
 | PRESET | A start preset for the picked machine; a step held: its locks cleared |
 | HOME, SEL, ENV, LFO, EDIT, FX, GLO | The pages |
-| ARP | PERF mode |
+| ARP | PERF mode: the machines' keys mute, the white keys are pads, the black keys 7-11 live FX |
 | SEQ | 16 / 32 steps; held + a black key: a mute |
 | OCT- / OCT+ | Steps 1-16 / 17-32 |
 | SAVE | Scene B stored; held 1 s: gone |

@@ -16,7 +16,9 @@
  *                   The same button again: back to SOUND
  *   SELECT          tempo (BPM)      ALGORITHM  swing      PRESET  a start preset for the machine's SOUND
  *   ARP             PERF mode: the white keys are the pads (repeat, tape stop, build-up, throws, kills, fill, scene,
- *                   break, freeze, drop), held
+ *                   break, freeze, drop), held; the six machines' keys mute / unmute them at a press (as on the
+ *                   LXR-02); the five black keys right of them are live FX, held (gate, half time, lo-fi, pitch
+ *                   down, sweep)
  *   SEQ             16 / 32 steps (to 32: the first 16 copied when the second half is empty)
  *   OCT- / OCT+     the page of steps shown (1-16, 17-32)
  *   SAVE            scene B: the six machines' SOUND now, for SCENE (PERFORM) and its pad to morph to; held 1 s: gone
@@ -40,7 +42,8 @@ static uint32_t dirty_at;
 
 static const uint8_t WK[16] = PLAT_WHITE_KEYS, BK[11] = PLAT_BLACK_KEYS;
 static const char *const PAD_SHORT[NPADS] = {"1/4", "1/8", "1/16", "1/32", "TAPE", "BLD", "RVB", "DLY",
-                                             "K-LO", "K-MD", "K-HI", "FILL", "SCN", "BRK", "FRZ", "DROP"};
+                                             "K-LO", "K-MD", "K-HI", "FILL", "SCN", "BRK", "FRZ", "DROP",
+                                             "GATE", "HALF", "LOFI", "PTCH", "SWP"};
 
 #define TR (set.tr[set.sel])             /* the picked machine's track */
 #define MC (MACHINES[set.sel])           /* and the machine */
@@ -575,8 +578,9 @@ static void input(void)
         else if (!(keys & bit) && (ui.keys & bit) && ui.held == (int8_t)(i + 16u * ui.view))
             step_up();
     }
-    if (ui.perf && pads != ui.pads) {
+    if (ui.perf && pads != (ui.pads & 0xFFFFu)) {
         uint32_t on = pads & ~ui.pads;
+        pads |= ui.pads & ~0xFFFFu;
         for (i = 0; i < NPADS; i++)
             if (on >> i & 1u)
                 app_say("PAD", PAD_NAME[i]);
@@ -584,10 +588,27 @@ static void input(void)
         eng_pads(pads);
         ui.redraw = 1;
     }
-    for (i = 0; i < NMACHINES; i++) {    /* the machines */
+    for (i = 0; i < NMACHINES; i++) {    /* the machines (PERF mode: their mutes) */
         uint32_t bit = 1u << BK[i];
         if ((keys & bit) && !(ui.keys & bit))
-            machine_key(i, btn);
+            machine_key(i, ui.perf ? (1u << B_SEQ) : btn);
+    }
+    if (ui.perf) {                       /* the live FX: the black keys right of the machines, held */
+        uint32_t fx = 0;
+        for (i = 0; i < 5u; i++)
+            if (keys >> BK[NMACHINES + i] & 1u)
+                fx |= 1u << (P_GATE + i);
+        pads = ui.pads & 0xFFFFu;
+        pads |= fx;
+        if (pads != ui.pads) {
+            uint32_t on = pads & ~ui.pads;
+            for (i = P_GATE; i < NPADS; i++)
+                if (on >> i & 1u)
+                    app_say("FX", PAD_NAME[i]);
+            ui.pads = pads;
+            eng_pads(pads);
+            ui.redraw = 1;
+        }
     }
     for (i = 0; i < NB; i++)
         if ((btn >> i & 1u) && !(ui.btn >> i & 1u))
@@ -672,15 +693,24 @@ static void lights(void)
         if (s >= 0 && (s >> 4) == ui.view)   /* the step under way: lit, or out if it plays */
             lit ^= 1u << WK[s & 15];
     }
-    for (i = 0; i < NMACHINES; i++) {    /* the machines: the picked one lit, a hit flashes, the others glow */
+    for (i = 0; i < NMACHINES; i++) {    /* the machines: the picked one lit, a hit flashes, the others glow; PERF:
+                                          * playing ones lit, muted ones out */
         uint32_t bit = 1u << BK[i];
         if (ui.muted >> i & 1u)
             continue;
-        if (i == set.sel || eng_env((int)i) > 0.3f)
+        if (ui.perf || i == set.sel || eng_env((int)i) > 0.3f)
             lit |= bit;
         else
             dim |= bit;
     }
+    if (ui.perf)                         /* the live FX keys: held lit, the others glow */
+        for (i = 0; i < 5u; i++) {
+            uint32_t bit = 1u << BK[NMACHINES + i];
+            if (ui.pads >> (P_GATE + i) & 1u)
+                lit |= bit;
+            else
+                dim |= bit;
+        }
     if (ui.playing)
         btn |= LED_PLAY_GREEN;
     btn |= 1u << PAGE_BTN[ui.page];
@@ -800,6 +830,19 @@ static void draw_page(uint32_t now)      /* the page's knobs, and a line under t
         cv_text(4, 82, &FONT_XS, PAGE_NAME[ui.page], C_HI);
         if (ui.page < PG_FX)
             cv_text(10 + text_w(&FONT_XS, PAGE_NAME[ui.page]), 82, &FONT_XS, MC.name, MC.rgb);
+        if (ui.perf) {                   /* the live FX keys, lit while held */
+            int32_t x = 60;
+            for (i = P_GATE; i < NPADS; i++) {
+                int on = ui.pads >> i & 1u;
+                int32_t w = text_w(&FONT_XS, PAD_SHORT[i]) + 6;
+                cv_rect(x, 80, w, 14, on ? C_HI : C_LINE);
+                if (!on)
+                    cv_rect(x + 1, 81, w - 2, 12, C_BLACK);
+                cv_text(x + 3, 81, &FONT_XS, PAD_SHORT[i], on ? C_BLACK : C_GRAY);
+                x += w + 3;
+            }
+            return;
+        }
         if (ui.page == PG_GLO && set.ms.has_scene)
             cv_text(100, 82, &FONT_XS, "SCENE B SET", C_AMB);
     }

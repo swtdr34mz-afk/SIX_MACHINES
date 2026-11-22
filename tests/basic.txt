@@ -144,6 +144,36 @@ expect muted 0
 tap ARP
 expect perf 1
 expect page 7
+# PERF mode: the machines' keys are mutes (no pick), the next five black keys live FX
+tapkey b1
+wait 30
+expect muted 2
+expect sel 5
+tapkey b1
+wait 30
+expect muted 0
+key b6 down
+wait 50
+expect pads 65536
+wav gate.wav
+wait 600
+key b6 up
+key b7 down
+wait 1000
+key b7 up
+key b8 down
+wait 500
+key b8 up
+key b9 down
+wait 500
+shot livefx.png
+key b9 up
+key b10 down
+wait 1200
+key b10 up
+wait 400
+wavstop
+expect pads 0
 key w2 down
 wait 50
 expect pads 4
