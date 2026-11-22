@@ -54,7 +54,7 @@ and the character knobs keep the loudness even (measured to within a few dB).
 
 | Control | What it does |
 | --- | --- |
-| Black keys | The six machines, left to right: KICK, SNARE, TOMS, METAL, HATS, CLAP. A key picks the machine and plays it (TOMS, METAL and CLAP are coming) |
+| Black keys | The six machines, left to right: KICK, SNARE, TOMS, METAL, HATS, CLAP. A key picks the machine; while the sequencer is stopped it also plays it (TOMS, METAL and CLAP are coming) |
 | SEQ held + a black key | The machine muted / back |
 | White keys | The picked machine's 16 steps: a tap turns a step on, again ACCENT, again off |
 | K1..K4 | The picked machine's four macros |

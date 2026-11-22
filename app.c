@@ -4,8 +4,8 @@
  * (device/unity.c, host/plat_host.c), after the platform: gfx.c and announce.c are in scope. The sound is dsp/engine.c.
  *
  * Controls (v0.2: KICK, SNARE, HATS)
- *   black keys      the six machines, left to right (KICK SNARE TOMS METAL HATS CLAP): a key picks the machine and plays
- *                   it; SEQ held + a key: the machine muted / back (TOMS, METAL, CLAP are coming)
+ *   black keys      the six machines, left to right (KICK SNARE TOMS METAL HATS CLAP): a key picks the machine (and
+ *                   plays it while the sequencer is stopped); SEQ held + a key: the machine muted / back (TOMS, METAL, CLAP are coming)
  *   white keys      the picked machine's 16 steps: a tap turns a step on, again ACCENT (louder), again off
  *   K1..K4          the picked machine's four macros. Each moves several parameters at once; turned slowly it rests a
  *                   few detents on each sweetspot (its name lights up); turned fast it runs past them
@@ -331,7 +331,8 @@ static void machine_key(uint32_t i, uint32_t btn)
         app_say(MACHINES[i].name, (ui.muted >> i & 1u) ? "MUTED" : "ON");
         return;
     }
-    eng_hit((int)i, 1.0f);
+    if (!ui.playing)                     /* stopped: hear it; while the beat runs a key only picks the machine */
+        eng_hit((int)i, 1.0f);
     if (set.sel != i) {
         set.sel = (uint8_t)i;
         knobs_from_settings();
