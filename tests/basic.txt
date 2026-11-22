@@ -98,6 +98,52 @@ wait 1300
 shot env.png
 tap HOME
 expect page 0
+# a changed sound and PRESET: asked first; SAVE keeps it as USER 1
+expect m1 75
+turn PRESET 1
+wait 50
+expect preset 0
+expect asking 1
+shot ask.png
+tap SAVE
+wait 50
+expect preset 4
+expect asking 0
+expect m1 75
+# not changed now: PRESET goes on at once (the USER ones that are kept, then its own)
+turn PRESET 1
+wait 50
+expect preset 0
+expect m1 50
+# changed, PRESET twice: let go
+turn K2 20
+wait 50
+turn PRESET 1
+wait 50
+expect asking 1
+turn PRESET 1
+wait 50
+expect preset 1
+expect asking 0
+# HOME held: back to the preset's sound
+turn K3 -30
+wait 50
+press HOME
+wait 1100
+release HOME
+expect m3 85
+expect page 0
+# a preset is the whole sound: SAT back to its default
+tap SEL
+turn K2 30
+tap SEL
+turn PRESET -1
+wait 50
+turn PRESET -1
+wait 50
+expect preset 0
+expect sat2 0
+shot pagebar.png
 # the new machines, each with a beat of its own
 tapkey b2
 expect sel 2

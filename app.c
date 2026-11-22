@@ -14,14 +14,19 @@
  *   pages           HOME the machine's SOUND, SEL its SAT, ENV its ENV, LFO its LFO, EDIT its MIX; FX the MASTER (again:
  *                   DELAY); GLO PERFORM (the DJ filter, the scene, the build-up's length, the filter's resonance).
  *                   The same button again: back to SOUND
- *   SELECT          tempo (BPM)      ALGORITHM  swing      PRESET  a start preset for the machine's SOUND
+ *   SELECT          tempo (BPM)      ALGORITHM  swing
+ *   PRESET          the machine's presets: 4 of its own, then the USER ones kept; a preset is the whole sound (SOUND,
+ *                   SAT, ENV, LFO; the MIX stays). A sound changed since its preset was loaded (a * after its name):
+ *                   the first turn asks SAVE SOUND? (SAVE keeps it as a USER preset, PRESET again lets it go)
+ *   HOME held 1 s   the machine's sound back to its preset
  *   ARP             PERF mode: the white keys are the pads (repeat, tape stop, build-up, throws, kills, fill, scene,
  *                   break, freeze, drop), held; the six machines' keys mute / unmute them at a press (as on the
  *                   LXR-02); the five black keys right of them are live FX, held (gate, half time, lo-fi, pitch
  *                   down, sweep)
  *   SEQ             16 / 32 steps (to 32: the first 16 copied when the second half is empty)
  *   OCT- / OCT+     the page of steps shown (1-16, 17-32)
- *   SAVE            scene B: the six machines' SOUND now, for SCENE (PERFORM) and its pad to morph to; held 1 s: gone
+ *   SAVE            scene B: the six machines' SOUND now, for SCENE (PERFORM) and its pad to morph to; held 1 s: gone.
+ *                   While SAVE SOUND? asks: the machine's sound kept as a USER preset
  *   PLAY            the sequencer: start from step 1 / stop.   REC held 1 s: the machine's pattern cleared
  *   Settings save themselves a few seconds after the last change. */
 #include "fastmath.h"
@@ -45,6 +50,7 @@ static const char *const PAD_SHORT[NPADS] = {"1/4", "1/8", "1/16", "1/32", "TAPE
                                              "K-LO", "K-MD", "K-HI", "FILL", "SCN", "BRK", "FRZ", "DROP",
                                              "GATE", "HALF", "LOFI", "PTCH", "SWP"};
 
+#define NUSER 4                          /* USER presets per machine */
 #define TR (set.tr[set.sel])             /* the picked machine's track */
 #define MC (MACHINES[set.sel])           /* and the machine */
 
@@ -94,7 +100,7 @@ static int settings_ok(void)
         for (k = 0; k < 4u; k++)
             if (t->m[k] > 127u || t->sat[k] > 127u || t->env[k] > 127u || t->lfo[k] > 127u || t->mix[k] > 127u)
                 return 0;
-        if (t->preset >= NPRESETS)
+        if (t->preset >= NPRESETS + NUSER)
             return 0;
         for (s = 0; s < NSTEPS; s++)
             if (t->cond[s] >= NCONDS || t->retrig[s] > 4u)
@@ -120,6 +126,75 @@ static void settings_save(void)
 {
     if (plat_store_save(OBJ_SETTINGS, &set, sizeof set) == 0)
         set_dirty = 0;
+}
+
+/* ------------------------------------------------------------ user presets --- */
+/* A preset is a machine's whole sound: its SOUND, SAT, ENV and LFO pages (16 bytes; the MIX is the mixer's, not the
+ * sound's, and stays). Each machine has its 4 presets and 4 USER ones, kept in their own store object. */
+#define SOUND_N 16
+#define USER_MAGIC 0x31555836u            /* "6XU1" */
+typedef struct {
+    uint32_t magic;
+    uint8_t used[NMACHINES][NUSER];
+    uint8_t snd[NMACHINES][NUSER][SOUND_N];
+} users_t;
+static users_t users;
+
+static void users_load(void)
+{
+    if (plat_store_load(OBJ_USER, &users, sizeof users) != (int)sizeof users || users.magic != USER_MAGIC) {
+        memset(&users, 0, sizeof users);
+        users.magic = USER_MAGIC;
+    }
+}
+
+static void sound_get(const track_t *t, uint8_t *o)
+{
+    uint32_t k;
+    for (k = 0; k < 4u; k++) {
+        o[k] = t->m[k];
+        o[4 + k] = t->sat[k];
+        o[8 + k] = t->env[k];
+        o[12 + k] = t->lfo[k];
+    }
+}
+static void sound_set(track_t *t, const uint8_t *o)
+{
+    uint32_t k;
+    for (k = 0; k < 4u; k++) {
+        t->m[k] = o[k];
+        t->sat[k] = o[4 + k];
+        t->env[k] = o[8 + k];
+        t->lfo[k] = o[12 + k];
+    }
+}
+/* preset P of machine T as a sound: its own (the pages at their defaults), or a USER one */
+static void preset_sound(uint32_t t, uint32_t p, uint8_t *o)
+{
+    uint32_t k;
+    if (p >= NPRESETS) {
+        for (k = 0; k < SOUND_N; k++)
+            o[k] = users.snd[t][p - NPRESETS][k];
+        return;
+    }
+    for (k = 0; k < 4u; k++) {
+        o[k] = MACHINES[t].preset[p].m[k];
+        o[4 + k] = PAGE_DEFAULT[PG_SAT][k];
+        o[8 + k] = PAGE_DEFAULT[PG_ENV][k];
+        o[12 + k] = PAGE_DEFAULT[PG_LFO][k];
+    }
+}
+static int sound_edited(uint32_t t)      /* the sound differs from the preset it was loaded from */
+{
+    uint8_t a[SOUND_N], b[SOUND_N];
+    sound_get(&set.tr[t], a);
+    preset_sound(t, set.tr[t].preset, b);
+    return memcmp(a, b, SOUND_N) != 0;
+}
+static const char *preset_name(uint32_t t, uint32_t p)
+{
+    static const char *const U[NUSER] = {"USER 1", "USER 2", "USER 3", "USER 4"};
+    return p < NPRESETS ? MACHINES[t].preset[p].name : U[p - NPRESETS];
 }
 
 /* ------------------------------------------------------- knobs: sweetspots --- */
@@ -207,6 +282,8 @@ static struct {
     uint8_t playing;
     uint8_t redraw;
     uint32_t load_at, load_shown;        /* the audio load on the screen, looked at twice a second */
+    uint32_t ask_until;                  /* SAVE SOUND? asked (until then) */
+    uint32_t home_t;                     /* HOME went down (held 1 s: the sound back to its preset) */
     uint32_t intro_at;                   /* the intro: the rack powering up, a module (and its sound) at a time */
     int8_t intro;                        /* the modules lit so far (-1: over) */
 } ui;
@@ -348,18 +425,63 @@ static void page_set(int pg)
     app_say(pg == PG_SOUND ? MC.name : PAGE_NAME[pg], pg == PG_SOUND ? "SOUND" : pg >= PG_FX ? "" : MC.name);
 }
 
-static void preset_load(int32_t d)
+/* the machine's sound from preset P (its own or a USER one) */
+static void preset_apply(uint32_t p)
 {
-    uint32_t k;
-    TR.preset = (uint8_t)(((int32_t)TR.preset + d % NPRESETS + NPRESETS) % NPRESETS);
-    for (k = 0; k < 4u; k++)
-        TR.m[k] = MC.preset[TR.preset].m[k];
+    uint8_t o[SOUND_N];
+    TR.preset = (uint8_t)p;
+    preset_sound(set.sel, p, o);
+    sound_set(&TR, o);
     knobs_sync();
     eng_changed(set.sel);
     if (!ui.playing)
         eng_hit(set.sel, 1.0f);           /* stopped: hear it */
     dirty();
-    app_say(MC.name, MC.preset[TR.preset].name);
+}
+
+/* PRESET turned: the next preset (its own ones, then the USER ones kept). A changed sound is asked about first */
+static void preset_load(int32_t d)
+{
+    uint32_t n = NPRESETS + NUSER, p = TR.preset, i;
+    if (!ui.ask_until && sound_edited(set.sel)) {
+        ui.ask_until = plat_ms() + 5000u;
+        ui.redraw = 1;
+        app_say("SAVE SOUND?", "");
+        return;
+    }
+    ui.ask_until = 0;
+    for (i = 0; i < n; i++) {            /* the next one there is */
+        p = (p + n + (d > 0 ? 1u : n - 1u)) % n;
+        if (p < NPRESETS || users.used[set.sel][p - NPRESETS])
+            break;
+    }
+    preset_apply(p);
+    app_say(MC.name, preset_name(set.sel, p));
+}
+
+/* SAVE while SAVE SOUND? asks: the sound kept as a USER preset (the one it came from, or the first free one, or the
+ * fourth) */
+static void preset_save(void)
+{
+    uint32_t u, k;
+    char t[16];
+    if (TR.preset >= NPRESETS) {
+        u = TR.preset - NPRESETS;
+    } else {
+        for (u = 0; u < NUSER - 1u; u++)
+            if (!users.used[set.sel][u])
+                break;
+    }
+    sound_get(&TR, users.snd[set.sel][u]);
+    users.used[set.sel][u] = 1;
+    plat_store_save(OBJ_USER, &users, sizeof users);
+    TR.preset = (uint8_t)(NPRESETS + u);
+    dirty();
+    ui.ask_until = 0;
+    for (k = 0; k < 15u && preset_name(set.sel, TR.preset)[k]; k++)
+        t[k] = preset_name(set.sel, TR.preset)[k];
+    t[k] = 0;
+    app_say("SAVED", t);
 }
 
 static int32_t len_steps(void) { return set.ms.length == 32u ? 32 : 16; }
@@ -463,6 +585,7 @@ static void machine_key(uint32_t i, uint32_t btn)
         eng_hit((int)i, 1.0f);
     if (set.sel != i) {
         set.sel = (uint8_t)i;
+        ui.ask_until = 0;
         ui.held = -1;
         knobs_sync();
         ui.zone_until = 0;
@@ -486,6 +609,8 @@ static void button(uint32_t i)
 {
     static const int8_t PAGE_OF[NB] = {PG_FX, PG_SAT, PG_ENV, PG_LFO, PG_MIX, PG_GLO, PG_SOUND, -1, -1, -1, -1, -1,
                                        -1, -1};
+    if (i == B_HOME)
+        ui.home_t = plat_ms();
     if (PAGE_OF[i] >= 0) {
         int pg = PAGE_OF[i];
         if (i == B_FX)
@@ -498,7 +623,12 @@ static void button(uint32_t i)
     switch (i) {
     case B_PLAY: play_toggle(); break;
     case B_REC: ui.rec_t = plat_ms(); break;
-    case B_SAVE: ui.save_t = plat_ms(); break;
+    case B_SAVE:
+        if (ui.ask_until)
+            preset_save();
+        else
+            ui.save_t = plat_ms();
+        break;
     case B_SEQ:
         ui.seq_t = plat_ms();
         ui.seq_used = 0;
@@ -543,6 +673,20 @@ static void held_buttons(uint32_t btn)   /* the ones that act on release, or aft
             dirty();
             app_say(MC.name, "CLEARED");
         }
+    }
+    if (ui.home_t) {                     /* HOME held a second: the machine's sound back to its preset */
+        if (!(btn >> B_HOME & 1u))
+            ui.home_t = 0;
+        else if (now - ui.home_t >= 1000u) {
+            ui.home_t = 0;
+            ui.ask_until = 0;
+            preset_apply(TR.preset);
+            app_say("SOUND RESET", preset_name(set.sel, TR.preset));
+        }
+    }
+    if (ui.ask_until && now >= ui.ask_until) {   /* not answered: nothing done */
+        ui.ask_until = 0;
+        ui.redraw = 1;
     }
     if (ui.save_t) {                     /* SAVE: scene B; held a second: none */
         if (!(btn >> B_SAVE & 1u)) {
@@ -803,6 +947,44 @@ static void draw_knob(int k, int32_t x, int32_t y, uint32_t now, uint16_t col)
     }
 }
 
+/* where we are: the eight pages as a bar under the rack, the machine's five, the master's two (FX), PERFORM; the page
+ * shown thick in its colour, its button's other page brighter than the rest */
+static void draw_page_bar(int32_t y)
+{
+    static const uint8_t GROUP[NPAGES] = {0, 0, 0, 0, 0, 1, 1, 2};
+    int32_t x = 4, w = 25;
+    uint32_t p;
+    for (p = 0; p < NPAGES; p++) {
+        int cur = p == ui.page, sib = !cur && p >= PG_FX && p <= PG_FX2 && ui.page >= PG_FX && ui.page <= PG_FX2;
+        uint16_t c = cur ? (p < PG_FX ? MC.rgb : C_HI) : sib ? C_GRAY : C_DIM;
+        if (p && GROUP[p] != GROUP[p - 1])
+            x += 8;
+        cv_rect(x, cur ? y : y + 1, w, cur ? 4 : 2, c);
+        x += w + 2;
+    }
+}
+
+/* SAVE SOUND? : the sound changed since its preset, PRESET turned */
+static void draw_ask(void)
+{
+    char t[32] = "AS ";
+    uint32_t u;
+    if (TR.preset >= NPRESETS) {
+        text_cat(t, preset_name(set.sel, TR.preset));
+    } else {
+        for (u = 0; u < NUSER - 1u; u++)
+            if (!users.used[set.sel][u])
+                break;
+        text_cat(t, preset_name(set.sel, NPRESETS + u));
+    }
+    ctext(120, 38, &FONT_XS, MC.name, MC.rgb);
+    ctext(120, 50, &FONT_B, "SAVE SOUND?", C_WHITE);
+    cv_text(20, 72, &FONT_XS, "SAVE", C_HI);
+    cv_text(60, 72, &FONT_XS, t, C_GRAY);
+    cv_text(20, 86, &FONT_XS, "PRESET", C_HI);
+    cv_text(66, 86, &FONT_XS, "AGAIN: DISCARD", C_GRAY);
+}
+
 static void draw_page(uint32_t now)      /* the page's knobs, and a line under them */
 {
     uint32_t i;
@@ -824,10 +1006,15 @@ static void draw_page(uint32_t now)      /* the page's knobs, and a line under t
         return;
     }
     if (ui.page == PG_SOUND) {
+        int32_t x;
         cv_text(4, 82, &FONT_XS, "PRESET", C_DIM);
-        cv_text(48, 82, &FONT_XS, MC.preset[TR.preset].name, C_AMB);
+        x = cv_text(48, 82, &FONT_XS, preset_name(set.sel, TR.preset), C_AMB);
+        if (sound_edited(set.sel))
+            cv_text(x + 3, 82, &FONT_XS, "*", C_WHITE);
     } else {
-        cv_text(4, 82, &FONT_XS, PAGE_NAME[ui.page], C_HI);
+        int32_t px = cv_text(4, 82, &FONT_XS, PAGE_NAME[ui.page], C_HI);
+        if (ui.page == PG_FX || ui.page == PG_FX2)   /* FX: its two pages */
+            cv_text(px + 6, 82, &FONT_XS, ui.page == PG_FX ? "1/2" : "2/2", C_GRAY);
         if (ui.page < PG_FX)
             cv_text(10 + text_w(&FONT_XS, PAGE_NAME[ui.page]), 82, &FONT_XS, MC.name, MC.rgb);
         if (ui.perf) {                   /* the live FX keys, lit while held */
@@ -938,7 +1125,10 @@ static void draw(void)
     /* the rack, and the page's knobs (or a sweetspot just reached, big) */
     cv_begin(240, 110, C_BLACK);
     draw_rack(4);
-    if (now < ui.zone_until && ui.zone_k >= 0) {
+    draw_page_bar(30);
+    if (ui.ask_until) {
+        draw_ask();
+    } else if (now < ui.zone_until && ui.zone_k >= 0) {
         const macro_t *mc = page_knob(ui.zone_k);
         uint16_t col = ui.page >= PG_FX ? C_HI : MC.rgb;
         ctext(120, 38, &FONT_XS, mc->name, C_GRAY);
@@ -981,6 +1171,7 @@ void app_init(void)
     plat_cpu2_set(1);                    /* the second core renders half the machines (if it cannot: all on one) */
     eng_init();
     settings_load();
+    users_load();
     eng_bind(set.tr, &set.ms);
     ui.held = -1;
     knobs_sync();
@@ -1093,7 +1284,7 @@ void app_frame(void)
         char t[64] = "SIX MACHINES. ";
         text_cat(t, MC.name);
         text_cat(t, ". ");
-        text_cat(t, ui.page == PG_SOUND ? MC.preset[TR.preset].name : PAGE_NAME[ui.page]);
+        text_cat(t, ui.page == PG_SOUND ? preset_name(set.sel, TR.preset) : PAGE_NAME[ui.page]);
         ann_say(t, 0, ANN_NOW);
     }
     ann_tick(now);
@@ -1144,6 +1335,7 @@ void app_backup_hold(int on) { (void)on; }
 void app_backup_restored(void)
 {
     settings_load();
+    users_load();
     eng_bind(set.tr, &set.ms);
     knobs_sync();
     ui.redraw = 1;
@@ -1176,6 +1368,10 @@ int app_expect(const char *what, int *got)
         *got = ui.view;
     else if (!strcmp(what, "scene"))
         *got = set.ms.has_scene;
+    else if (!strcmp(what, "asking"))
+        *got = ui.ask_until != 0;
+    else if (!strncmp(what, "sat", 3) && what[3] >= '1' && what[3] <= '4')
+        *got = TR.sat[what[3] - '1'];
     else if (!strcmp(what, "preset"))
         *got = TR.preset;
     else if (!strcmp(what, "playing"))

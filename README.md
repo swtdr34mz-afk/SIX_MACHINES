@@ -39,8 +39,17 @@ Each machine has five pages of four knobs; the master has three. Every knob has 
 | FX again | **DELAY** (ping-pong) | TIME: 1/16, 1/8, 3/16, 1/4 | FEEDBK: SHORT, ECHO, DUB, LOOP | TONE: DARK, TAPE, CLEAR | RETURN (reverb and delay): OFF, LOW, MIX, LOUD |
 | GLO | **PERFORM** | FILTER (DJ): LP MAX, LP, OPEN, HP, HP MAX | SCENE: A, HALF, B | BUILD (its length): 1, 2, 4 BARS | RES: SOFT, ACID, SCREAM |
 
-The same page button again goes back to SOUND. On the SOUND page a white mark on a knob's bar shows where its ENV and
-LFO move it now.
+The same page button again goes back to SOUND. A bar under the rack shows the eight pages (the machine's five, the
+master's two on FX, PERFORM) with the one shown thick; on FX its name says 1/2 or 2/2. On the SOUND page a white mark on
+a knob's bar shows where its ENV and LFO move it now.
+
+## Presets
+
+A preset is a machine's whole sound: its SOUND, SAT, ENV and LFO pages (the MIX page, the mixer, stays as it is).
+PRESET turns through the machine's four presets and its **USER** presets. A sound changed since its preset was loaded
+shows a * after the preset's name, and the first turn of PRESET asks **SAVE SOUND?**: SAVE keeps it as a USER preset
+(four a machine, kept apart from the patterns), PRESET again lets the change go. **HOME held 1 s** brings the machine's
+sound back to its preset.
 
 ## The sequencer
 
@@ -95,12 +104,13 @@ from its sound to scene B; pad 13 jumps there while held. SAVE held 1 s forgets 
 | K1..K4 | The page's four knobs |
 | SELECT | Tempo (60 to 200 BPM); a step held: its condition |
 | ALGORITHM | Swing; a step held: its retrigs |
-| PRESET | A start preset for the picked machine; a step held: its locks cleared |
+| PRESET | The picked machine's presets (asks SAVE SOUND? when the sound was changed); a step held: its locks cleared |
+| HOME held 1 s | The machine's sound back to its preset |
 | HOME, SEL, ENV, LFO, EDIT, FX, GLO | The pages |
 | ARP | PERF mode: the machines' keys mute, the white keys are pads, the black keys 7-11 live FX |
 | SEQ | 16 / 32 steps; held + a black key: a mute |
 | OCT- / OCT+ | Steps 1-16 / 17-32 |
-| SAVE | Scene B stored; held 1 s: gone |
+| SAVE | Scene B stored; held 1 s: gone. While SAVE SOUND? asks: the sound kept as a USER preset |
 | PLAY | Start from step 1 / stop |
 | REC held 1 s | Clears the picked machine's pattern |
 

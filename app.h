@@ -13,15 +13,16 @@
 #define APP_SPLASH                       /* app_splash: the rack powering up, not the platform's page */
 #define APP_BLOCK 128u                   /* frames per audio block: 2.9 ms at 44.1 kHz (a drum machine: tight) */
 
-/* the store: the app's settings (the knobs, the pattern, tempo) and the panel calibration (the platform's) */
-enum { OBJ_SETTINGS, OBJ_PANEL, OBJ_NOBJ };
-#define APP_STORE_MAP {0xFC000u, 0xDC000u}
+/* the store: the app's settings (the knobs, the patterns, tempo), the panel calibration (the platform's) and the user
+ * presets (apart from the settings, so a new settings layout never takes them away) */
+enum { OBJ_SETTINGS, OBJ_PANEL, OBJ_USER, OBJ_NOBJ };
+#define APP_STORE_MAP {0xFC000u, 0xDC000u, 0xDE000u}
 
 /* backup and restore over USB: the settings */
-#define APP_BACKUP_OBJS {OBJ_SETTINGS}
+#define APP_BACKUP_OBJS {OBJ_SETTINGS, OBJ_USER}
 #define APP_BACKUP_MAGIC 0x584D3653u            /* "S6MX" */
 #define APP_BACKUP_VERSION 1u
-#define APP_BACKUP_WHAT "replaces pattern and knobs"
+#define APP_BACKUP_WHAT "replaces patterns, sounds, presets"
 int app_backup_playing(void);
 void app_backup_flush(void);
 void app_backup_hold(int on);
