@@ -1,5 +1,5 @@
 {
-  "what": "A performance drum machine in the spirit of the Elektron boxes and the LXR-02: six synthesized machines with an FM drum and cymbals, four macro knobs each that rest on sweetspots, p-locks, conditions, retrigs, a master with compressor, reverb and delay, and live pads, mutes and FX.",
+  "what": "A performance drum machine in the spirit of the Elektron boxes and the LXR-02: six synthesized machines with an FM drum and cymbals, four macro knobs each that rest on sweetspots, p-locks, conditions, retrigs, a master with compressor, reverb and delay, and live pads, mutes and FX, MIDI clock and kick out to lead a synth (STRANGER SYNTH).",
   "author": "swtdr34mz",
   "kinds": "drums",
   "play": "https://swtdr34mz-afk.github.io/SIX_MACHINES/emu/",

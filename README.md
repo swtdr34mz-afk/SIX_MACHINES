@@ -14,8 +14,10 @@ lights up. Turn it fast and it runs past them. Wherever a knob stands, the sound
 ## MIDI out: SIX MACHINES leads
 
 While it plays, SIX MACHINES sends **MIDI clock** (24 a quarter, at its tempo) with **START** and **STOP**, and the
-**KICK's hits as note 36 on channel 10**, over USB: to a computer, or to another FM-1 that plays USB host
-(STRANGER SYNTH: its arp and its sidechain follow).
+**KICK's hits as note 36 on channel 10**, over USB: to a computer, or to another FM-1 that plays USB host.
+With [STRANGER SYNTH](https://github.com/swtdr34mz-afk/STRANGER_SYNTH) (LINK on its SAVE button) its arp, its heartbeat
+and its sidechain follow SIX MACHINES: connect this FM-1 to its USB port with an OTG cable or adapter (the port gives no
+power: this one runs on its battery or through a powered hub). New in v0.2.0, with the FM drum.
 
 ## The six machines
 
