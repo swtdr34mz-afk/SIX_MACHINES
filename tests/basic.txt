@@ -2,21 +2,24 @@
 #   X0X_FONTSET=terminus python3 fm1-base/tools/build.py . --host, then build/host/sixmachines_host tests/basic.txt build/host
 splashshot splash.png
 wait 600
-# first start: four on the floor, 124 BPM, the first preset
+# first start: KICK picked, four on the floor, snare on 2 and 4, hats on the offbeats, 124 BPM
+expect sel 0
 expect steps 4369
 expect acc 1
+expect steps1 4112
+expect steps4 17476
 expect bpm 124
 expect preset 0
 expect m1 50
 expect zone2 1
 shot boot.png
-# play: the kick runs, its steps go round
+# play: the beat runs
 tap PLAY
 expect playing 1
 wav beat.wav
 wait 2000
 wavstop
-expect hits >3
+expect hits >10
 expect peak_db_min -20
 shot playing.png
 # a step: on, accent, off
@@ -45,24 +48,53 @@ expect m1 75
 expect zone1 2
 shot sweetspot.png
 wait 900
-shot knobs.png
-# the other knobs: GRIT to RUMBLE, BOOM to 808
-turn K4 40
+# SNARE: picked by its key, its own knobs and steps
+tapkey b1
+wait 50
+expect sel 1
+expect steps 4112
+expect m1 50
+tapkey w6
+expect steps 4176
+turn K4 33
 wait 200
-turn K3 40
-wait 200
-wav grit.wav
+expect m4 75
+expect zone4 2
+wait 900
+shot snare.png
+# HATS: a preset, then muted with SEQ held
+tapkey b4
+wait 50
+expect sel 4
+turn PRESET 2
+wait 100
+expect preset 2
+expect m2 105
+press SEQ
+tapkey b4
+release SEQ
+expect muted 16
+expect sel 4
+wait 1300
+shot muted.png
+press SEQ
+tapkey b4
+release SEQ
+expect muted 0
+# a machine still to come: not picked
+tapkey b2
+wait 50
+expect sel 4
+shot soon.png
+wait 1300
+# the whole beat with the changes, and with GRIT and RATTLE pushed
+tapkey b0
+turn K4 60
+wait 100
+wav beat2.wav
 wait 2000
 wavstop
 expect peak_db_min -20
-# a preset loads all four
-turn PRESET 1
-wait 100
-expect preset 1
-expect m1 75
-expect m2 12
-expect m3 85
-expect m4 0
 # tempo and swing
 turn SELECT 4
 wait 100
@@ -70,20 +102,14 @@ expect bpm 128
 turn ALGO 20
 wait 100
 expect swing 20
-# the black keys: KICK plays, the others are coming
 tap PLAY
 expect playing 0
-tapkey b0
-wait 50
-expect hits >4
-tapkey b1
-wait 50
-shot soon.png
-# REC held: the pattern cleared
+# REC held: the picked machine's pattern cleared, the others kept
 press REC
 wait 1100
 release REC
 expect steps 0
+expect steps1 4176
 # the settings kept across a restart
 tapkey w0
 tapkey w8
@@ -91,6 +117,7 @@ wait 4500
 expect dirty 0
 reboot
 wait 600
+expect sel 0
 expect steps 257
-expect preset 1
+expect steps1 4176
 expect bpm 128

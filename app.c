@@ -3,62 +3,75 @@
 /* SIX MACHINES: input, the knobs and their sweetspots, the pattern, the screen, settings. Part of the unity build
  * (device/unity.c, host/plat_host.c), after the platform: gfx.c and announce.c are in scope. The sound is dsp/engine.c.
  *
- * Controls (v0.1: the first machine, KICK)
- *   white keys      the 16 steps: a tap turns a step on, again ACCENT (louder), again off
- *   black keys      the six machines, left to right: KICK plays the kick now; the others are coming (their names)
- *   K1..K4          the KICK's macros: TUNE, PUNCH, BOOM, GRIT. Each moves several parameters at once; turned slowly it
- *                   rests a few detents on each sweetspot (its name lights up); turned fast it runs past them
- *   SELECT          tempo (BPM)      ALGORITHM  swing      PRESET  a start preset for the four knobs
+ * Controls (v0.2: KICK, SNARE, HATS)
+ *   black keys      the six machines, left to right (KICK SNARE TOMS METAL HATS CLAP): a key picks the machine and plays
+ *                   it; SEQ held + a key: the machine muted / back (TOMS, METAL, CLAP are coming)
+ *   white keys      the picked machine's 16 steps: a tap turns a step on, again ACCENT (louder), again off
+ *   K1..K4          the picked machine's four macros. Each moves several parameters at once; turned slowly it rests a
+ *                   few detents on each sweetspot (its name lights up); turned fast it runs past them
+ *   SELECT          tempo (BPM)      ALGORITHM  swing      PRESET  a start preset for the machine's four knobs
  *   PLAY            the sequencer: start from step 1 / stop
- *   REC held 1 s    the pattern cleared
- *   OCT- / OCT+     the kick's level
+ *   REC held 1 s    the machine's pattern cleared
+ *   OCT- / OCT+     the machine's level
  *   Settings save themselves a few seconds after the last change. */
 #include "fastmath.h"
 #include "engine.h"
 
-#define SET_MAGIC 0x31584D36u            /* "6MX1": the settings record; another magic loads the defaults */
+#define SET_MAGIC 0x32584D36u            /* "6MX2": the settings record; another magic loads the defaults */
+typedef struct {                         /* a machine's track */
+    uint8_t m[4];                        /* its macros 0..127 */
+    uint16_t steps, acc;                 /* its pattern: steps that play, and the accented ones */
+    uint8_t preset;                      /* the preset PRESET loaded last */
+    uint8_t level;                       /* 0 .. 10 */
+    uint8_t rsv[2];
+} track_t;
 typedef struct {
     uint32_t magic;
-    uint8_t m[4];                        /* the KICK's macros 0..127 */
-    uint16_t steps, acc;                 /* the pattern: steps that play, and the accented ones */
+    track_t tr[NMACHINES];
     uint8_t bpm;                         /* 60 .. 200 */
     uint8_t swing;                       /* 0 .. 100 % */
-    uint8_t preset;                      /* the preset PRESET loaded last */
-    uint8_t level;                       /* the kick's level 0 .. 10 */
-    uint8_t rsv[4];
+    uint8_t sel;                         /* the machine picked */
+    uint8_t rsv[5];
 } settings_t;
 static settings_t set;
 static uint8_t set_dirty;
 static uint32_t dirty_at;
 
-static const char *const MACHINE[6] = {"KICK", "SNARE", "TOMS", "METAL", "HATS", "CLAP"};
 static const uint8_t WK[16] = PLAT_WHITE_KEYS, BK[11] = PLAT_BLACK_KEYS;
 
 /* --------------------------------------------------------------- settings --- */
+/* the first beat: four on the floor (the first accented), the snare on 2 and 4, the hats on the offbeats */
+static const uint16_t DEF_STEPS[NMACHINES] = {0x1111u, 0x1010u, 0, 0, 0x4444u, 0};
+static const uint16_t DEF_ACC[NMACHINES] = {0x0001u, 0, 0, 0, 0x4444u, 0};
+
 static void settings_defaults(void)
 {
-    uint32_t i;
+    uint32_t i, k;
+    memset(&set, 0, sizeof set);
     set.magic = SET_MAGIC;
-    for (i = 0; i < 4u; i++)
-        set.m[i] = KICK_PRESETS[0].m[i];
-    set.steps = 0x1111u;                 /* four on the floor, the first beat accented */
-    set.acc = 0x0001u;
+    for (i = 0; i < NMACHINES; i++) {
+        for (k = 0; k < 4u; k++)
+            set.tr[i].m[k] = MACHINES[i].preset[0].m[k];
+        set.tr[i].steps = DEF_STEPS[i];
+        set.tr[i].acc = DEF_ACC[i];
+        set.tr[i].level = 8;
+    }
     set.bpm = 124;
-    set.swing = 0;
-    set.preset = 0;
-    set.level = 8;
-    for (i = 0; i < 4u; i++)
-        set.rsv[i] = 0;
+    set.sel = M_KICK;
 }
 
 static int settings_ok(void)
 {
-    uint32_t i;
-    for (i = 0; i < 4u; i++)
-        if (set.m[i] > 127u)
+    uint32_t i, k;
+    for (i = 0; i < NMACHINES; i++) {
+        for (k = 0; k < 4u; k++)
+            if (set.tr[i].m[k] > 127u)
+                return 0;
+        if (set.tr[i].preset >= NPRESETS || set.tr[i].level > 10u)
             return 0;
-    return set.magic == SET_MAGIC && set.bpm >= 60u && set.bpm <= 200u && set.swing <= 100u
-           && set.preset < NKICK_PRESETS && set.level <= 10u;
+    }
+    return set.magic == SET_MAGIC && set.bpm >= 60u && set.bpm <= 200u && set.swing <= 100u && set.sel < NMACHINES
+           && MACHINES[set.sel].ready;
 }
 
 static void settings_load(void)
@@ -82,11 +95,17 @@ static void settings_save(void)
 /* everything the engine plays from the settings */
 static void apply(void)
 {
-    eng_kick_macros(set.m);
-    eng_pattern(set.steps & 0xFFFFu, set.acc & set.steps);
+    uint32_t i;
+    for (i = 0; i < NMACHINES; i++) {
+        eng_macros((int)i, set.tr[i].m);
+        eng_pattern((int)i, set.tr[i].steps, set.tr[i].acc & set.tr[i].steps);
+        eng_level((int)i, (float)set.tr[i].level / 10.0f);
+    }
     eng_tempo((float)set.bpm, (float)set.swing / 100.0f);
-    eng_kick_level((float)set.level / 10.0f);
 }
+
+#define TR (set.tr[set.sel])             /* the picked machine's track */
+#define MC (MACHINES[set.sel])           /* and the machine */
 
 /* ------------------------------------------------------- knobs: sweetspots --- */
 /* A knob's position runs past each sweetspot zone REST detents more than its value: turned slowly, it rests on the
@@ -151,11 +170,11 @@ static int zone_near(const macro_t *mc, int32_t v)
     return best;
 }
 
-static void knobs_from_settings(void)
+static void knobs_from_settings(void)    /* the knobs' positions: the picked machine's values */
 {
     uint32_t k;
     for (k = 0; k < 4u; k++)
-        knob_pos[k] = pos_of_val(&KICK_MACROS[k], set.m[k]);
+        knob_pos[k] = pos_of_val(&MC.macro[k], TR.m[k]);
 }
 
 /* ---------------------------------------------------------------------- UI --- */
@@ -168,6 +187,7 @@ static struct {
     uint32_t keys, btn;
     uint32_t rec_t;
     uint32_t enc_at[NE];
+    uint8_t muted;                       /* bit per machine (live: not kept) */
     int32_t step_drawn;
     uint8_t hit_drawn;
     uint8_t playing;
@@ -221,7 +241,7 @@ void app_say(const char *a, const char *b)
     }
 }
 
-/* a quick turn moves further: x1 slow, x3, x6 when the detents come close together */
+/* a quick turn moves further: x1 slow, more when the detents come close together */
 static int32_t accel(int k, int32_t e, int32_t mid, int32_t fast)
 {
     uint32_t now = plat_ms(), dt = now - ui.enc_at[k];
@@ -235,16 +255,16 @@ static int32_t accel(int k, int32_t e, int32_t mid, int32_t fast)
 
 static void knob(int k, int32_t e)
 {
-    const macro_t *mc = &KICK_MACROS[k];
+    const macro_t *mc = &MC.macro[k];
     int32_t p = clamp(knob_pos[k] + accel(EN_K1 + k, e, 3, 6), 0, pos_max(mc)), v = val_of_pos(mc, p);
-    int zb = zone_at(mc, set.m[k]), za = zone_at(mc, v);
+    int zb = zone_at(mc, TR.m[k]), za = zone_at(mc, v);
     knob_pos[k] = p;
     ui.knob_at[k] = plat_ms();
     ui.redraw = 1;
-    if (v == set.m[k])
+    if (v == TR.m[k])
         return;
-    set.m[k] = (uint8_t)v;
-    eng_kick_macros(set.m);
+    TR.m[k] = (uint8_t)v;
+    eng_macros(set.sel, TR.m);
     dirty();
     if (za >= 0 && za != zb) {           /* a sweetspot reached: its name, big */
         ui.zone_k = (int8_t)k;
@@ -258,30 +278,34 @@ static void knob(int k, int32_t e)
 static void preset_load(int32_t d)
 {
     uint32_t k;
-    set.preset = (uint8_t)(((int32_t)set.preset + d % NKICK_PRESETS + NKICK_PRESETS) % NKICK_PRESETS);
+    TR.preset = (uint8_t)(((int32_t)TR.preset + d % NPRESETS + NPRESETS) % NPRESETS);
     for (k = 0; k < 4u; k++)
-        set.m[k] = KICK_PRESETS[set.preset].m[k];
+        TR.m[k] = MC.preset[TR.preset].m[k];
     knobs_from_settings();
-    eng_kick_macros(set.m);
+    eng_macros(set.sel, TR.m);
+    if (!ui.playing)
+        eng_hit(set.sel, 1.0f);           /* stopped: hear it */
     dirty();
-    app_say("PRESET", KICK_PRESETS[set.preset].name);
+    app_say(MC.name, MC.preset[TR.preset].name);
 }
+
+static void pattern_sync(void) { eng_pattern(set.sel, TR.steps, TR.acc & TR.steps); }
 
 static void step_tap(uint32_t s)         /* off -> on -> accent -> off */
 {
     uint16_t bit = (uint16_t)(1u << s);
-    if (!(set.steps & bit)) {
-        set.steps |= bit;
-        set.acc &= (uint16_t)~bit;
-    } else if (!(set.acc & bit)) {
-        set.acc |= bit;
+    if (!(TR.steps & bit)) {
+        TR.steps |= bit;
+        TR.acc &= (uint16_t)~bit;
+    } else if (!(TR.acc & bit)) {
+        TR.acc |= bit;
     } else {
-        set.steps &= (uint16_t)~bit;
-        set.acc &= (uint16_t)~bit;
+        TR.steps &= (uint16_t)~bit;
+        TR.acc &= (uint16_t)~bit;
     }
-    eng_pattern(set.steps, set.acc & set.steps);
-    if (!ui.playing && (set.steps & bit))
-        eng_hit((set.acc & bit) ? 1.0f : 0.72f);   /* stopped: hear what the step will play */
+    pattern_sync();
+    if (!ui.playing && (TR.steps & bit))
+        eng_hit(set.sel, (TR.acc & bit) ? 1.0f : 0.72f);   /* stopped: hear what the step will play */
     dirty();
     ui.redraw = 1;
 }
@@ -290,6 +314,29 @@ static void play_toggle(void)
 {
     ui.playing = (uint8_t)!ui.playing;
     eng_play(ui.playing);
+    ui.redraw = 1;
+}
+
+/* a black key: SEQ held, the machine muted or back; else the machine picked and played */
+static void machine_key(uint32_t i, uint32_t btn)
+{
+    if (!MACHINES[i].ready) {
+        app_say(MACHINES[i].name, "COMING SOON");
+        return;
+    }
+    if (btn >> B_SEQ & 1u) {
+        ui.muted ^= (uint8_t)(1u << i);
+        eng_mute((int)i, ui.muted >> i & 1u);
+        app_say(MACHINES[i].name, (ui.muted >> i & 1u) ? "MUTED" : "ON");
+        return;
+    }
+    eng_hit((int)i, 1.0f);
+    if (set.sel != i) {
+        set.sel = (uint8_t)i;
+        knobs_from_settings();
+        ui.zone_until = 0;
+        dirty();
+    }
     ui.redraw = 1;
 }
 
@@ -302,14 +349,10 @@ static void input(void)
         if ((keys & bit) && !(ui.keys & bit))
             step_tap(i);
     }
-    for (i = 0; i < 6u; i++) {           /* the machines */
+    for (i = 0; i < NMACHINES; i++) {    /* the machines */
         uint32_t bit = 1u << BK[i];
-        if (!(keys & bit) || (ui.keys & bit))
-            continue;
-        if (i == 0)
-            eng_hit(1.0f);
-        else
-            app_say(MACHINE[i], "COMING SOON");
+        if ((keys & bit) && !(ui.keys & bit))
+            machine_key(i, btn);
     }
     for (i = 0; i < NB; i++) {
         uint32_t bit = 1u << i;
@@ -320,25 +363,25 @@ static void input(void)
         else if (i == B_REC)
             ui.rec_t = plat_ms();
         else if (i == B_OCTDN || i == B_OCTUP) {
-            int32_t l = clamp((int32_t)set.level + (i == B_OCTUP ? 1 : -1), 0, 10);
+            int32_t l = clamp((int32_t)TR.level + (i == B_OCTUP ? 1 : -1), 0, 10);
             char t[8];
-            set.level = (uint8_t)l;
-            eng_kick_level((float)l / 10.0f);
+            TR.level = (uint8_t)l;
+            eng_level(set.sel, (float)l / 10.0f);
             dirty();
             int_text(l * 10, t);
             text_cat(t, "%");
-            app_say("LEVEL", t);
+            app_say(MC.name, t);
         }
     }
-    if (ui.rec_t) {                      /* REC held a second: the pattern cleared */
+    if (ui.rec_t) {                      /* REC held a second: the machine's pattern cleared */
         if (!(btn >> B_REC & 1u))
             ui.rec_t = 0;
         else if (plat_ms() - ui.rec_t >= 1000u) {
             ui.rec_t = 0;
-            set.steps = set.acc = 0;
-            eng_pattern(0, 0);
+            TR.steps = TR.acc = 0;
+            pattern_sync();
             dirty();
-            app_say("PATTERN", "CLEARED");
+            app_say(MC.name, "CLEARED");
         }
     }
     for (i = 0; i < 4u; i++)
@@ -371,12 +414,12 @@ static void input(void)
 
 static void lights(void)
 {
-    uint32_t lit = 0, mid = 0, i, btn = 0, dimb;
+    uint32_t lit = 0, mid = 0, dim = 0, i, btn = 0, dimb;
     int32_t s = eng_step();
-    for (i = 0; i < 16u; i++) {
+    for (i = 0; i < 16u; i++) {          /* the picked machine's steps: accents lit, steps half */
         uint32_t bit = 1u << WK[i];
-        if (set.steps >> i & 1u) {
-            if (set.acc >> i & 1u)
+        if (TR.steps >> i & 1u) {
+            if (TR.acc >> i & 1u)
                 lit |= bit;
             else
                 mid |= bit;
@@ -384,52 +427,67 @@ static void lights(void)
     }
     if (s >= 0)                          /* the step under way: lit, or out if it plays (it flickers past) */
         lit ^= 1u << WK[s];
-    if (eng_kick_env() > 0.3f)
-        lit |= 1u << BK[0];
+    for (i = 0; i < NMACHINES; i++) {    /* the machines: the picked one lit, a hit flashes, the others glow */
+        uint32_t bit = 1u << BK[i];
+        if (!MACHINES[i].ready || (ui.muted >> i & 1u))
+            continue;
+        if (i == set.sel || eng_env((int)i) > 0.3f)
+            lit |= bit;
+        else
+            dim |= bit;
+    }
     if (ui.playing)
         btn |= LED_PLAY_GREEN;
-    dimb = (1u << B_PLAY) | (1u << B_REC) | (1u << B_OCTDN) | (1u << B_OCTUP);
-    plat_lights(btn | (ui.btn & ~(1u << B_PLAY)), lit | (ui.keys & ((1u << BK[0]) | 0)), dimb,
-                (1u << BK[0]) | (1u << BK[1]) | (1u << BK[2]) | (1u << BK[3]) | (1u << BK[4]) | (1u << BK[5]), 1);
+    dimb = (1u << B_PLAY) | (1u << B_REC) | (1u << B_SEQ) | (1u << B_OCTDN) | (1u << B_OCTUP);
+    plat_lights(btn | (ui.btn & ~(1u << B_PLAY)), lit, dimb, dim, 1);
     plat_lights_mid(0, mid & ~lit);
 }
 
 void app_input_only(void) { input(); }
 
 /* ------------------------------------------------------------------ drawing --- */
-#define C_KICK RGB(255, 92, 40)          /* the KICK's colour: the rack's first module */
-#define C_KICK_DIM RGB(90, 34, 18)
+static uint16_t dim_of(uint16_t c)       /* a machine's colour at about a third */
+{
+    uint32_t r = (c >> 11) & 31u, g = (c >> 5) & 63u, b = c & 31u;
+    return (uint16_t)(((r * 3u / 8u) << 11) | ((g * 3u / 8u) << 5) | (b * 3u / 8u));
+}
 
 static void ctext(int32_t cx, int32_t y, const felucca_font_t *f, const char *s, uint16_t c)
 {
     cv_text(cx - text_w(f, s) / 2, y, f, s, c);
 }
 
-/* the rack: six modules, KICK alive (it flashes with each hit), the others waiting */
-static void draw_rack(int32_t y, float env)
+/* the rack: six modules; the picked one framed in its colour, each flashing with its hits; muted ones crossed out,
+ * the coming ones grey */
+static void draw_rack(int32_t y)
 {
     uint32_t i;
-    for (i = 0; i < 6u; i++) {
+    for (i = 0; i < NMACHINES; i++) {
+        const machine_t *m = &MACHINES[i];
         int32_t x = 3 + (int32_t)i * 39;
-        if (i == 0) {
-            uint16_t c = env > 0.25f ? C_KICK : C_KICK_DIM;
-            cv_rect(x, y, 37, 26, c);
-            cv_rect(x + 2, y + 2, 33, 22, C_BLACK);
-            cv_rect(x + 4, y + 18, (int32_t)(29.0f * fm_clampf(env * 1.4f, 0.0f, 1.0f)), 3, C_KICK);
-            ctext(x + 18, y + 5, &FONT_XS, MACHINE[i], C_WHITE);
-        } else {
+        float env = eng_env((int)i);
+        int sel = i == set.sel, mute = ui.muted >> i & 1u;
+        if (!m->ready) {
             cv_rect(x, y, 37, 26, C_LINE);
             cv_rect(x + 1, y + 1, 35, 24, C_BLACK);
-            ctext(x + 18, y + 8, &FONT_XS, MACHINE[i], C_DIM);
+            ctext(x + 18, y + 8, &FONT_XS, m->name, C_DIM);
+            continue;
         }
+        cv_rect(x, y, 37, 26, sel ? m->rgb : env > 0.25f ? dim_of(m->rgb) : C_LINE);
+        cv_rect(x + (sel ? 2 : 1), y + (sel ? 2 : 1), sel ? 33 : 35, sel ? 22 : 24, C_BLACK);
+        if (!mute)
+            cv_rect(x + 4, y + 18, (int32_t)(29.0f * fm_clampf(env * 1.4f, 0.0f, 1.0f)), 3, m->rgb);
+        ctext(x + 18, y + 5, &FONT_XS, m->name, mute ? C_DIM : sel ? C_WHITE : C_GRAY);
+        if (mute)
+            cv_line(x + 4, y + 21, x + 32, y + 4, C_GRAY);
     }
 }
 
 /* one knob: its name, a bar 0..127 with the sweetspots as ticks, the value, and the zone it is on (lit) or near (dim) */
 static void draw_knob(int k, int32_t x, int32_t y, uint32_t now)
 {
-    const macro_t *mc = &KICK_MACROS[k];
-    int32_t v = set.m[k], w = 54, z = zone_at(mc, v), zn = zone_near(mc, v), fill = (v * (w - 2)) / 127;
+    const macro_t *mc = &MC.macro[k];
+    int32_t v = TR.m[k], w = 54, z = zone_at(mc, v), zn = zone_near(mc, v), fill = (v * (w - 2)) / 127;
     uint32_t i;
     int hot = ui.knob_at[k] && now - ui.knob_at[k] < 600u;
     char t[8];
@@ -437,19 +495,18 @@ static void draw_knob(int k, int32_t x, int32_t y, uint32_t now)
     int_text(v, t);
     cv_text(x + w - text_w(&FONT_XS, t), y, &FONT_XS, t, hot ? C_HI : C_AMB);
     cv_rect(x, y + 14, w, 8, C_LINE);
-    cv_rect(x + 1, y + 15, fill, 6, z >= 0 ? C_KICK : C_HI);
+    cv_rect(x + 1, y + 15, fill, 6, z >= 0 ? MC.rgb : C_HI);
     for (i = 0; i < mc->nzones; i++) {   /* the sweetspots */
         int32_t tx = x + 1 + (mc->centre[i] * (w - 3)) / 127;
-        cv_rect(tx, y + 11, 1, 3, (int)i == z ? C_KICK : C_GRAY);
+        cv_rect(tx, y + 11, 1, 3, (int)i == z ? MC.rgb : C_GRAY);
     }
     ctext(x + w / 2, y + 26, &FONT_XS, mc->zone[z >= 0 ? z : zn], z >= 0 ? C_WHITE : C_DIM);
 }
 
 static void draw(void)
 {
-    uint32_t now = plat_ms(), i;
+    uint32_t now = plat_ms(), i, j;
     int32_t s = eng_step();
-    float env = eng_kick_env();
     char t[24];
     /* header: the name, or a message; the tempo and the transport */
     cv_begin(240, 30, C_BLACK);
@@ -457,13 +514,13 @@ static void draw(void)
         int32_t x = cv_text(8, 6, &FONT_B, ui.msg[0], C_WHITE);
         cv_text(x + 8, 6, &FONT_B, ui.msg[1], C_HI);
     } else {
-        cv_text(8, 6, &FONT_B, "SIX MACHINES", C_KICK);
+        cv_text(8, 6, &FONT_B, "SIX MACHINES", MACHINES[M_KICK].rgb);
         int_text(set.bpm, t);
         text_cat(t, " BPM");
         cv_text(200 - text_w(&FONT_XS, t), 10, &FONT_XS, t, C_AMB);
         if (ui.playing) {                /* a triangle: playing */
             for (i = 0; i < 6u; i++)
-                cv_rect(214 + (int32_t)i, 9 + (int32_t)i / 1, 1, 12 - 2 * (int32_t)i, C_HI);
+                cv_rect(214 + (int32_t)i, 9 + (int32_t)i, 1, 12 - 2 * (int32_t)i, C_HI);
         } else {
             cv_rect(213, 9, 10, 10, C_DIM);
         }
@@ -472,17 +529,17 @@ static void draw(void)
     cv_blit(0, 0);
     /* the rack, and the knobs (or a sweetspot just reached, big) */
     cv_begin(240, 110, C_BLACK);
-    draw_rack(4, env);
+    draw_rack(4);
     if (now < ui.zone_until && ui.zone_k >= 0) {
-        const macro_t *mc = &KICK_MACROS[ui.zone_k];
+        const macro_t *mc = &MC.macro[ui.zone_k];
         ctext(120, 40, &FONT_XS, mc->name, C_GRAY);
-        ctext(120, 54, &APP_BIG_FONT, mc->zone[ui.zone_z], C_KICK);
-        cv_rect(60, 96, 120, 2, C_KICK);
+        ctext(120, 54, &APP_BIG_FONT, mc->zone[ui.zone_z], MC.rgb);
+        cv_rect(60, 96, 120, 2, MC.rgb);
     } else {
         for (i = 0; i < 4u; i++)
             draw_knob((int)i, 4 + (int32_t)i * 59, 40, now);
         cv_text(4, 84, &FONT_XS, "PRESET", C_DIM);
-        cv_text(48, 84, &FONT_XS, KICK_PRESETS[set.preset].name, C_AMB);
+        cv_text(48, 84, &FONT_XS, MC.preset[TR.preset].name, C_AMB);
         t[0] = 0;
         text_cat(t, "SWING ");
         int_text(set.swing, t + 6);
@@ -490,25 +547,31 @@ static void draw(void)
         cv_text(236 - text_w(&FONT_XS, t), 84, &FONT_XS, t, C_AMB);
     }
     cv_blit(0, 30);
-    /* the 16 steps, two rows of eight; the step under way lit white */
+    /* the picked machine's 16 steps, two rows of eight, in its colour; the other machines' hits as small marks at the
+     * cell's top; the step under way lit white */
     cv_begin(240, 100, C_BLACK);
     cv_rect(0, 0, 240, 1, C_LINE);
     for (i = 0; i < 16u; i++) {
-        int32_t x = 6 + (int32_t)(i % 8u) * 29, y = 10 + (int32_t)(i / 8u) * 36;
-        int on = set.steps >> i & 1u, acc = on && (set.acc >> i & 1u);
-        uint16_t c = acc ? C_KICK : on ? C_KICK_DIM : C_LINE;
+        int32_t x = 6 + (int32_t)(i % 8u) * 29, y = 10 + (int32_t)(i / 8u) * 36, mx = x + 3;
+        int on = TR.steps >> i & 1u, acc = on && (TR.acc >> i & 1u);
+        uint16_t c = acc ? MC.rgb : on ? dim_of(MC.rgb) : C_LINE;
         cv_rect(x, y, 25, 28, c);
         if (!on)
             cv_rect(x + 1, y + 1, 23, 26, C_BLACK);
         if (acc)
             cv_rect(x + 4, y + 4, 17, 3, C_WHITE);
+        for (j = 0; j < NMACHINES; j++)  /* the others */
+            if (j != set.sel && MACHINES[j].ready && (set.tr[j].steps >> i & 1u)) {
+                cv_rect(mx, y + 22, 4, 3, (ui.muted >> j & 1u) ? C_DIM : MACHINES[j].rgb);
+                mx += 6;
+            }
         if ((int32_t)i == s)
             cv_rect(x, y + 30, 25, 3, C_WHITE);
         else if (i % 4u == 0)
             cv_rect(x, y + 30, 3, 3, C_DIM);   /* the beats */
     }
     cv_text(6, 84, &FONT_XS, "STEPS 16", C_DIM);
-    cv_text(234 - text_w(&FONT_XS, "KICK"), 84, &FONT_XS, "KICK", C_KICK);
+    cv_text(234 - text_w(&FONT_XS, MC.name), 84, &FONT_XS, MC.name, MC.rgb);
     cv_blit(0, 140);
 }
 
@@ -537,15 +600,16 @@ void app_splash(void)                    /* the rack, powered: the name over six
     uint32_t i;
     lcd_fill(0, 0, 240, 240, C_BLACK);
     cv_begin(240, 120, C_BLACK);
-    ctext(120, 52, &APP_BIG_FONT, "SIX", C_KICK);
+    ctext(120, 52, &APP_BIG_FONT, "SIX", MACHINES[M_KICK].rgb);
     ctext(120, 84, &APP_BIG_FONT, "MACHINES", C_WHITE);
     cv_blit(0, 20);
     cv_begin(240, 80, C_BLACK);
-    for (i = 0; i < 6u; i++) {
+    for (i = 0; i < NMACHINES; i++) {
         int32_t x = 3 + (int32_t)i * 39;
-        cv_rect(x, 6, 37, 26, i == 0 ? C_KICK : RGB(70, 70, 78));
+        uint16_t c = MACHINES[i].ready ? MACHINES[i].rgb : RGB(70, 70, 78);
+        cv_rect(x, 6, 37, 26, c);
         cv_rect(x + 2, 8, 33, 22, C_BLACK);
-        ctext(x + 18, 13, &FONT_XS, MACHINE[i], i == 0 ? C_WHITE : RGB(120, 120, 128));
+        ctext(x + 18, 13, &FONT_XS, MACHINES[i].name, MACHINES[i].ready ? C_WHITE : RGB(120, 120, 128));
     }
     ctext(120, 52, &FONT_XS, "by swtdr34mz", RGB(150, 150, 158));
     cv_blit(0, 140);
@@ -561,19 +625,23 @@ void app_ui_init(void)
 
 void app_frame(void)
 {
-    uint32_t now = plat_ms();
+    uint32_t now = plat_ms(), i;
     int32_t s;
-    uint8_t hit;
+    uint8_t hit = 0;
     input();
     lights();
     if (ann_on() && ann_where()) {       /* a screen reader that just started listening hears the page */
-        char t[64] = "SIX MACHINES. KICK. ";
-        text_cat(t, KICK_PRESETS[set.preset].name);
+        char t[64] = "SIX MACHINES. ";
+        text_cat(t, MC.name);
+        text_cat(t, ". ");
+        text_cat(t, MC.preset[TR.preset].name);
         ann_say(t, 0, ANN_NOW);
     }
     ann_tick(now);
     s = eng_step();
-    hit = eng_kick_env() > 0.25f;
+    for (i = 0; i < NMACHINES; i++)
+        if (eng_env((int)i) > 0.25f)
+            hit |= (uint8_t)(1u << i);
     if (s != ui.step_drawn || hit != ui.hit_drawn) {
         ui.step_drawn = s;
         ui.hit_drawn = hit;
@@ -613,18 +681,22 @@ void app_backup_restored(void)
 #ifdef PLAT_HOST
 int app_expect(const char *what, int *got)
 {
-    if (!strcmp(what, "steps"))
-        *got = set.steps;
+    if (!strcmp(what, "steps"))          /* the picked machine's */
+        *got = TR.steps;
     else if (!strcmp(what, "acc"))
-        *got = set.acc;
+        *got = TR.acc;
+    else if (!strcmp(what, "sel"))
+        *got = set.sel;
+    else if (!strcmp(what, "muted"))
+        *got = ui.muted;
     else if (!strcmp(what, "bpm"))
         *got = set.bpm;
     else if (!strcmp(what, "swing"))
         *got = set.swing;
     else if (!strcmp(what, "preset"))
-        *got = set.preset;
+        *got = TR.preset;
     else if (!strcmp(what, "level"))
-        *got = set.level;
+        *got = TR.level;
     else if (!strcmp(what, "playing"))
         *got = ui.playing;
     else if (!strcmp(what, "step"))
@@ -633,10 +705,12 @@ int app_expect(const char *what, int *got)
         *got = (int)eng_hits();
     else if (!strcmp(what, "dirty"))
         *got = set_dirty;
-    else if (!strncmp(what, "m", 1) && what[1] >= '1' && what[1] <= '4')   /* m1..m4: the macros */
-        *got = set.m[what[1] - '1'];
+    else if (!strncmp(what, "steps", 5) && what[5] >= '0' && what[5] <= '5')   /* steps0..5: a machine's */
+        *got = set.tr[what[5] - '0'].steps;
+    else if (what[0] == 'm' && what[1] >= '1' && what[1] <= '4' && !what[2])   /* m1..m4: the picked machine's macros */
+        *got = TR.m[what[1] - '1'];
     else if (!strncmp(what, "zone", 4) && what[4] >= '1' && what[4] <= '4')   /* zone1..4: on a sweetspot (-1 not) */
-        *got = zone_at(&KICK_MACROS[what[4] - '1'], set.m[what[4] - '1']);
+        *got = zone_at(&MC.macro[what[4] - '1'], TR.m[what[4] - '1']);
     else
         return 0;
     return 1;
