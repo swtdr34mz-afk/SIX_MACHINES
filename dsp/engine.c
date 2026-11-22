@@ -4,7 +4,6 @@
 #include "engine.h"
 #include "fastmath.h"
 #include "plat.h"
-#include <string.h>
 
 #define RGB565(r, g, b) ((uint16_t)((((r) >> 3) << 11) | (((g) >> 2) << 5) | ((b) >> 3)))
 
@@ -549,7 +548,15 @@ static void glide(float *c, const float *t, uint32_t n, float a)
     }
 }
 #define GLIDE(c, t, a) glide((float *)&(c), (const float *)&(t), sizeof(c) / sizeof(float), (a))
-#define SAME(c, t) (!memcmp(&(c), &(t), sizeof(c)))
+static int same(const float *a, const float *b, uint32_t n)   /* (no libc in the engine's unit) */
+{
+    uint32_t i;
+    for (i = 0; i < n; i++)
+        if (a[i] != b[i])
+            return 0;
+    return 1;
+}
+#define SAME(c, t) same((const float *)&(c), (const float *)&(t), sizeof(c) / sizeof(float))
 static uint8_t gliding;                  /* bit per machine: its parameters on their way */
 
 void eng_render(int32_t *lr, uint32_t n, float gain)
