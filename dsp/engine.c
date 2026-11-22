@@ -4,6 +4,7 @@
 #include "engine.h"
 #include "fastmath.h"
 #include "plat.h"
+#include <string.h>
 
 #define RGB565(r, g, b) ((uint16_t)((((r) >> 3) << 11) | (((g) >> 2) << 5) | ((b) >> 3)))
 
@@ -175,7 +176,7 @@ static float kick_sample(kick_voice_t *v, const kick_coef_t *c)
         }
         y = v->crush_s;
     }
-    y *= c->makeup * v->vel * v->fade;
+    y *= v->vel * v->fade;                    /* (the makeup: the render's smoothed gain) */
     v->e_sweep *= c->k_sweep;
     v->e_body *= c->k_body;
     v->e_tail *= c->k_tail;
@@ -270,7 +271,7 @@ static float snare_sample(snare_voice_t *v, const snare_coef_t *c)
         v->cl_prev = n;
     }
     x = drive_clip(x, c->drive);
-    x *= c->makeup * v->vel * v->fade;
+    x *= v->vel * v->fade;
     v->e_sweep *= c->k_sweep;
     v->e_body *= c->k_body;
     if (v->hold < c->hold)
@@ -367,7 +368,7 @@ static float hat_sample(hat_voice_t *v, const hat_coef_t *c)
     hp = x - c->k * v1 - v2;
     v->lp += c->lp_a * (hp - v->lp);
     x = drive_clip(v->lp * 0.8f, c->drive);
-    x *= c->makeup * v->vel * v->fade * v->e_amp;
+    x *= v->vel * v->fade * v->e_amp;
     v->e_amp *= c->k_amp;
     v->fade *= v->k_fade;
     if (v->e_amp < 0.0003f || v->fade < 0.0005f)
@@ -378,9 +379,9 @@ static float hat_sample(hat_voice_t *v, const hat_coef_t *c)
 /* ======================================================= machines in common === */
 /* each machine: its coefficients (kept by the main loop under the lock, copied by the render at a block's start) and
  * two voices: a new hit takes the other one and the old one fades out in a few ms (no click; a hat chokes itself) */
-static kick_coef_t kick_next, kick_c;
-static snare_coef_t snare_next, snare_c;
-static hat_coef_t hat_next, hat_c;
+static kick_coef_t kick_next;
+static snare_coef_t snare_next;
+static hat_coef_t hat_next;
 static volatile uint8_t coef_new;        /* bit per machine */
 static kick_voice_t kv[2];
 static snare_voice_t sv[2];
@@ -389,6 +390,7 @@ static uint8_t voice_next[NMACHINES];
 static const float LEVEL_FULL[NMACHINES] = {0.85f, 0.70f, 0.70f, 0.70f, 0.55f, 0.70f};   /* the mix at level 10 */
 static float level[NMACHINES] = {0.85f, 0.70f, 0.70f, 0.70f, 0.55f, 0.70f};
 static volatile uint8_t muted;           /* bit per machine */
+static float gain_m[NMACHINES];          /* each machine's makeup x level, smoothed per sample (the render's) */
 
 void eng_macros(int machine, const uint8_t m[4])
 {
@@ -431,11 +433,22 @@ void eng_mute(int machine, int on)
     plat_unlock(f);
 }
 
-/* a machine struck: its other voice starts, the one that sounded fades */
+static kick_coef_t kick_c;
+static snare_coef_t snare_c;
+static hat_coef_t hat_c;
+
+/* a machine struck: its other voice starts, the one that sounded fades. Struck from silence, its gain is its own at
+ * once (no glide from the last sound's into the attack) */
 static void strike(int machine, float vel)
 {
     uint32_t a = voice_next[machine], b = a ^ 1u;
     voice_next[machine] = (uint8_t)b;
+    if (machine == M_KICK && !kv[0].on && !kv[1].on)
+        gain_m[M_KICK] = kick_c.makeup * level[M_KICK];
+    else if (machine == M_SNARE && !sv[0].on && !sv[1].on)
+        gain_m[M_SNARE] = snare_c.makeup * level[M_SNARE];
+    else if (machine == M_HATS && !hv[0].on && !hv[1].on)
+        gain_m[M_HATS] = hat_c.makeup * level[M_HATS];
     if (machine == M_KICK) {
         if (kv[a].on)
             kv[a].k_fade = coef(0.003f);
@@ -510,6 +523,9 @@ void eng_init(void)
     snare_c = snare_next;
     hat_c = hat_next;
     coef_new = 0;
+    gain_m[M_KICK] = kick_c.makeup * level[M_KICK];
+    gain_m[M_SNARE] = snare_c.makeup * level[M_SNARE];
+    gain_m[M_HATS] = hat_c.makeup * level[M_HATS];
 }
 
 /* a step's length in samples: a sixteenth, the pairs swung (the first longer, the second shorter, up to 2 : 1) */
@@ -519,17 +535,40 @@ static float step_len(int32_t s)
     return (s & 1) ? base * (1.0f - sw) : base * (1.0f + sw);
 }
 
+/* New parameters while a machine sounds (a knob turned, a preset loaded) must not jump: a level, a drive or a filter
+ * that changes from one sample to the next is a click, and so is one that changes in steps from block to block (a
+ * zipper). While a voice rings, every parameter glides to its new value sample by sample (about 5 ms); the gains
+ * (makeup x level) glide in the render the same way. A machine that is silent takes them at once: its next hit is
+ * exactly the new sound. All the coefficients are floats. */
+static void glide(float *c, const float *t, uint32_t n, float a)
+{
+    uint32_t i;
+    for (i = 0; i < n; i++) {
+        float d = t[i] - c[i];
+        c[i] = fm_fabsf(d) > 1e-5f * fm_fabsf(t[i]) + 1e-12f ? c[i] + a * d : t[i];
+    }
+}
+#define GLIDE(c, t, a) glide((float *)&(c), (const float *)&(t), sizeof(c) / sizeof(float), (a))
+#define SAME(c, t) (!memcmp(&(c), &(t), sizeof(c)))
+static uint8_t gliding;                  /* bit per machine: its parameters on their way */
+
 void eng_render(int32_t *lr, uint32_t n, float gain)
 {
     uint32_t i, mc;
     float pk = 0.0f, ps = 0.0f, ph = 0.0f;
-    if (coef_new) {
-        if (coef_new & (1u << M_KICK))
+    if (coef_new) {                    /* new parameters: silent machines take them, sounding ones glide */
+        if (!kv[0].on && !kv[1].on)
             kick_c = kick_next;
-        if (coef_new & (1u << M_SNARE))
+        else if (!SAME(kick_c, kick_next))
+            gliding |= 1u << M_KICK;
+        if (!sv[0].on && !sv[1].on)
             snare_c = snare_next;
-        if (coef_new & (1u << M_HATS))
+        else if (!SAME(snare_c, snare_next))
+            gliding |= 1u << M_SNARE;
+        if (!hv[0].on && !hv[1].on)
             hat_c = hat_next;
+        else if (!SAME(hat_c, hat_next))
+            gliding |= 1u << M_HATS;
         coef_new = 0;
     }
     if (play_req >= 0) {
@@ -566,6 +605,14 @@ void eng_render(int32_t *lr, uint32_t n, float gain)
                 step_pos = (step_pos + 1) % NSTEPS;
             }
         }
+        if (gliding) {
+            if (gliding & (1u << M_KICK))
+                GLIDE(kick_c, kick_next, 0.005f);
+            if (gliding & (1u << M_SNARE))
+                GLIDE(snare_c, snare_next, 0.005f);
+            if (gliding & (1u << M_HATS))
+                GLIDE(hat_c, hat_next, 0.005f);
+        }
         if (kv[0].on)
             k += kick_sample(&kv[0], &kick_c);
         if (kv[1].on)
@@ -578,10 +625,13 @@ void eng_render(int32_t *lr, uint32_t n, float gain)
             h += hat_sample(&hv[0], &hat_c);
         if (hv[1].on)
             h += hat_sample(&hv[1], &hat_c);
-        pk = fm_maxf(pk, fm_fabsf(k));         /* the screen's: each machine as if at full level */
-        ps = fm_maxf(ps, fm_fabsf(s));
-        ph = fm_maxf(ph, fm_fabsf(h));
-        x = k * level[M_KICK] + s * level[M_SNARE] + h * level[M_HATS];
+        gain_m[M_KICK] += (kick_c.makeup * level[M_KICK] - gain_m[M_KICK]) * 0.005f;   /* ~5 ms, as the glide */
+        gain_m[M_SNARE] += (snare_c.makeup * level[M_SNARE] - gain_m[M_SNARE]) * 0.005f;
+        gain_m[M_HATS] += (hat_c.makeup * level[M_HATS] - gain_m[M_HATS]) * 0.005f;
+        pk = fm_maxf(pk, fm_fabsf(k * kick_c.makeup));   /* the screen's: each machine as if at full level */
+        ps = fm_maxf(ps, fm_fabsf(s * snare_c.makeup));
+        ph = fm_maxf(ph, fm_fabsf(h * hat_c.makeup));
+        x = k * gain_m[M_KICK] + s * gain_m[M_SNARE] + h * gain_m[M_HATS];
         /* the master: clean below 0.6, rounded off above, never over full scale */
         y = x;
         if (fm_fabsf(x) > 0.6f) {
@@ -590,6 +640,20 @@ void eng_render(int32_t *lr, uint32_t n, float gain)
         }
         gain_now += (gain - gain_now) * 0.004f;
         lr[2 * i] = lr[2 * i + 1] = (int32_t)(y * gain_now);
+    }
+    if (gliding) {                     /* arrived (or silent: the rest at once) */
+        if (SAME(kick_c, kick_next) || (!kv[0].on && !kv[1].on)) {
+            kick_c = kick_next;
+            gliding &= (uint8_t)~(1u << M_KICK);
+        }
+        if (SAME(snare_c, snare_next) || (!sv[0].on && !sv[1].on)) {
+            snare_c = snare_next;
+            gliding &= (uint8_t)~(1u << M_SNARE);
+        }
+        if (SAME(hat_c, hat_next) || (!hv[0].on && !hv[1].on)) {
+            hat_c = hat_next;
+            gliding &= (uint8_t)~(1u << M_HATS);
+        }
     }
     env_now[M_KICK] = pk > env_now[M_KICK] ? pk : env_now[M_KICK] * 0.85f;
     env_now[M_SNARE] = ps > env_now[M_SNARE] ? ps : env_now[M_SNARE] * 0.85f;
@@ -614,8 +678,8 @@ void eng_lab_hit(int machine, const uint8_t m[4], float *out, uint32_t n)
     snare_start(&s, 1.0f);
     hat_start(&h, 1.0f);
     for (i = 0; i < n; i++)
-        out[i] = machine == M_KICK ? (k.on ? kick_sample(&k, &kc) : 0.0f)
-               : machine == M_SNARE ? (s.on ? snare_sample(&s, &sc) : 0.0f)
-               : (h.on ? hat_sample(&h, &hc) : 0.0f);
+        out[i] = machine == M_KICK ? (k.on ? kick_sample(&k, &kc) * kc.makeup : 0.0f)
+               : machine == M_SNARE ? (s.on ? snare_sample(&s, &sc) * sc.makeup : 0.0f)
+               : (h.on ? hat_sample(&h, &hc) * hc.makeup : 0.0f);
 }
 #endif

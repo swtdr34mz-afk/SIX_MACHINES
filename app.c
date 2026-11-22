@@ -192,6 +192,7 @@ static struct {
     uint8_t hit_drawn;
     uint8_t playing;
     uint8_t redraw;
+    uint32_t load_at, load_shown;        /* the audio load on the screen, looked at twice a second */
 } ui;
 
 static void text_cat(char *d, const char *s)
@@ -570,7 +571,19 @@ static void draw(void)
         else if (i % 4u == 0)
             cv_rect(x, y + 30, 3, 3, C_DIM);   /* the beats */
     }
-    cv_text(6, 84, &FONT_XS, "STEPS 16", C_DIM);
+    /* the audio load (the render's share of its time) and the dropouts since the start: never more than a glance */
+    t[0] = 0;
+    text_cat(t, "CPU ");
+    int_text((int32_t)plat_cpu_pct(), t + 4);
+    text_cat(t, "%");
+    {
+        int32_t x = cv_text(6, 84, &FONT_XS, t, plat_cpu_pct() > 80u ? C_WHITE : C_DIM);
+        if (plat_xruns()) {
+            char d[16] = "DROPS ";
+            int_text((int32_t)plat_xruns(), d + 6);
+            cv_text(x + 10, 84, &FONT_XS, d, C_WHITE);
+        }
+    }
     cv_text(234 - text_w(&FONT_XS, MC.name), 84, &FONT_XS, MC.name, MC.rgb);
     cv_blit(0, 140);
 }
@@ -653,6 +666,14 @@ void app_frame(void)
         if (now >= ui.zone_until)
             ui.zone_until = 0;
         ui.redraw = 1;
+    }
+    if (now - ui.load_at >= 500u) {
+        uint32_t l = plat_cpu_pct() | plat_xruns() << 8;
+        ui.load_at = now;
+        if (l != ui.load_shown) {
+            ui.load_shown = l;
+            ui.redraw = 1;
+        }
     }
     if (set_dirty && now - dirty_at > 4000u)   /* saved a few seconds after the last change */
         settings_save();
