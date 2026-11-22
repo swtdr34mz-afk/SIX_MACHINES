@@ -204,6 +204,8 @@ static struct {
     uint8_t playing;
     uint8_t redraw;
     uint32_t load_at, load_shown;        /* the audio load on the screen, looked at twice a second */
+    uint32_t intro_at;                   /* the intro: the rack powering up, a module (and its sound) at a time */
+    int8_t intro;                        /* the modules lit so far (-1: over) */
 } ui;
 
 static void text_cat(char *d, const char *s)
@@ -692,7 +694,11 @@ static void lights(void)
     plat_lights_mid(0, mid & ~lit);
 }
 
-void app_input_only(void) { input(); }
+void app_input_only(void)
+{
+    if (ui.intro < 0)
+        input();
+}
 
 /* ------------------------------------------------------------------ drawing --- */
 static uint16_t dim_of(uint16_t c)       /* a colour at about a third */
@@ -967,6 +973,56 @@ void app_splash(void)                    /* the rack, powered: the name over six
     cv_blit(0, 140);
 }
 
+/* the intro: the name, and the six modules switching on one after another, each with its own sound; any key or
+ * button ends it */
+#define INTRO_STEP 170u
+static void draw_intro(int lit)
+{
+    uint32_t i;
+    cv_begin(240, 120, C_BLACK);
+    ctext(120, 52, &APP_BIG_FONT, "SIX", MACHINES[M_KICK].rgb);
+    ctext(120, 84, &APP_BIG_FONT, "MACHINES", C_WHITE);
+    cv_blit(0, 20);
+    cv_begin(240, 80, C_BLACK);
+    for (i = 0; i < NMACHINES; i++) {
+        int32_t x = 3 + (int32_t)i * 39;
+        int on = (int)i < lit;
+        cv_rect(x, 6, 37, 26, on ? MACHINES[i].rgb : RGB(40, 40, 46));
+        cv_rect(x + 2, 8, 33, 22, (int)i == lit - 1 ? dim_of(MACHINES[i].rgb) : C_BLACK);
+        ctext(x + 18, 13, &FONT_XS, MACHINES[i].name, on ? C_WHITE : RGB(70, 70, 78));
+    }
+    ctext(120, 52, &FONT_XS, "by swtdr34mz", RGB(150, 150, 158));
+    cv_blit(0, 140);
+}
+
+static int intro_frame(uint32_t now)     /* 1 while the intro runs */
+{
+    int k;
+    if (ui.intro < 0)
+        return 0;
+    if (plat_keys() || plat_buttons()) { /* skipped */
+        ui.intro = -1;
+        ui.keys = plat_keys();
+        ui.btn = plat_buttons();
+        lcd_fill(0, 0, 240, 240, C_BLACK);
+        ui.redraw = 1;
+        return 0;
+    }
+    k = (int)((now - ui.intro_at) / INTRO_STEP);
+    if (k > NMACHINES + 3) {
+        ui.intro = -1;
+        lcd_fill(0, 0, 240, 240, C_BLACK);
+        ui.redraw = 1;
+        return 0;
+    }
+    if (k > ui.intro && k <= NMACHINES) {
+        ui.intro = (int8_t)k;
+        eng_hit(k - 1, 0.55f);
+        draw_intro(k);
+    }
+    return 1;
+}
+
 void app_ui_init(void)
 {
     lcd_fill(0, 0, 240, 240, C_BLACK);
@@ -974,6 +1030,9 @@ void app_ui_init(void)
     ui.held = -1;
     ui.step_drawn = -2;
     ui.redraw = 1;
+    ui.intro = 0;
+    ui.intro_at = plat_ms();
+    draw_intro(0);
 }
 
 void app_frame(void)
@@ -981,6 +1040,10 @@ void app_frame(void)
     uint32_t now = plat_ms(), i;
     int32_t s;
     uint8_t hit = 0;
+    if (intro_frame(now)) {
+        plat_lights(0, 0, 0, 0, 0);
+        return;
+    }
     input();
     lights();
     if (ann_on() && ann_where()) {       /* a screen reader that just started listening hears the page */

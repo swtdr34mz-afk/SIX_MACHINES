@@ -1,7 +1,9 @@
 # SIX MACHINES in the host simulator:
 #   X0X_FONTSET=terminus python3 fm1-base/tools/build.py . --host, then build/host/sixmachines_host tests/basic.txt build/host
 splashshot splash.png
-wait 600
+wait 500
+shot intro.png
+wait 1500
 # first start: KICK picked, SOUND page, four on the floor, snare on 2 and 4, hats on the offbeats, 16 steps
 expect sel 0
 expect page 0
