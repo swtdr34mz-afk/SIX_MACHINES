@@ -24,6 +24,27 @@ wavstop
 expect hits >10
 expect peak_db_min -20
 shot playing.png
+# while the sequencer runs nothing is written to the flash (it would stop the render): saved once it stops
+turn SELECT 2
+wait 5000
+expect dirty 1
+expect bpm 126
+# ALGORITHM: DRIVE, the master's compressor and warmth as one macro (PUNCH: 70, 40)
+turn ALGO 80
+wait 100
+expect comp 70
+expect warm 40
+turn ALGO -100
+wait 100
+expect comp 0
+# SEQ held + SELECT: the swing
+press SEQ
+turn SELECT 10
+release SEQ
+wait 50
+expect swing 10
+expect length 16
+turn SELECT -2
 # a step: on, accent, off
 tapkey w2
 expect steps 4373

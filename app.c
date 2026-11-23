@@ -14,7 +14,8 @@
  *   pages           HOME the machine's SOUND, SEL its SAT, ENV its ENV, LFO its LFO, EDIT its MIX; FX the MASTER (again:
  *                   DELAY); GLO PERFORM (the DJ filter, the scene, the build-up's length, the filter's resonance).
  *                   The same button again: back to SOUND
- *   SELECT          tempo (BPM)      ALGORITHM  swing
+ *   SELECT          tempo (BPM); SEQ held: swing
+ *   ALGORITHM       DRIVE: the master's compressor and warmth as one macro (OFF, GLUE, PUNCH, PUMP, CRUSH)
  *   PRESET          the machine's presets: 4 of its own, then the USER ones kept; a preset is the whole sound (SOUND,
  *                   SAT, ENV, LFO; the MIX stays). A sound changed since its preset was loaded (a * after its name):
  *                   the first turn asks SAVE SOUND? (SAVE keeps it as a USER preset, PRESET again lets it go)
@@ -128,6 +129,26 @@ static void settings_save(void)
         set_dirty = 0;
 }
 
+/* -------------------------------------------------------- DRIVE (ALGORITHM) --- */
+/* one macro for the master's compressor and warmth together, kept in the settings' spare byte */
+#define DRIVE (set.rsv[0])
+static const macro_t DRIVE_KNOB = {"DRIVE", 5, {0, 35, 70, 100, 127}, {"OFF", "GLUE", "PUNCH", "PUMP", "CRUSH"}};
+static const uint8_t DRIVE_COMP[5] = {0, 35, 70, 110, 110}, DRIVE_WARM[5] = {0, 20, 40, 55, 100};
+static void drive_apply(int32_t v)       /* COMP and WARMTH (MASTER page) between the zones' pairs */
+{
+    uint32_t z;
+    for (z = 1; z < 5u && v > DRIVE_KNOB.centre[z]; z++)
+        ;
+    if (z >= 5u)
+        z = 4;
+    {
+        int32_t a = DRIVE_KNOB.centre[z - 1], b = DRIVE_KNOB.centre[z], f = b > a ? ((v - a) * 256) / (b - a) : 256;
+        f = clamp(f, 0, 256);
+        set.ms.fx[0] = (uint8_t)(DRIVE_COMP[z - 1] + ((DRIVE_COMP[z] - DRIVE_COMP[z - 1]) * f) / 256);
+        set.ms.fx[1] = (uint8_t)(DRIVE_WARM[z - 1] + ((DRIVE_WARM[z] - DRIVE_WARM[z - 1]) * f) / 256);
+    }
+}
+
 /* ------------------------------------------------------------ user presets --- */
 /* A preset is a machine's whole sound: its SOUND, SAT, ENV and LFO pages (16 bytes; the MIX is the mixer's, not the
  * sound's, and stays). Each machine has its 4 presets and 4 USER ones, kept in their own store object. */
@@ -139,6 +160,7 @@ typedef struct {
     uint8_t snd[NMACHINES][NUSER][SOUND_N];
 } users_t;
 static users_t users;
+static uint8_t users_dirty;              /* changed, not written yet */
 
 static void users_load(void)
 {
@@ -475,7 +497,7 @@ static void preset_save(void)
     }
     sound_get(&TR, users.snd[set.sel][u]);
     users.used[set.sel][u] = 1;
-    plat_store_save(OBJ_USER, &users, sizeof users);
+    users_dirty = 1;                     /* (written once the sequencer stops) */
     TR.preset = (uint8_t)(NPRESETS + u);
     dirty();
     ui.ask_until = 0;
@@ -592,6 +614,7 @@ static void kick_out(int32_t s)          /* the step that plays now: the KICK's 
 static void play_toggle(void)
 {
     ui.playing = (uint8_t)!ui.playing;
+    dirty_at = plat_ms();                /* (stopped: what changed is saved a moment later) */
     eng_play(ui.playing);
     clock_play(ui.playing);
     ui.redraw = 1;
@@ -825,6 +848,14 @@ static void input(void)
             ui.held_edit = 1;
             dirty();
             app_say("CONDITION", COND_NAME[c]);
+        } else if (btn >> B_SEQ & 1u) {  /* SEQ held: the swing */
+            char t[8];
+            ui.seq_used = 1;
+            set.ms.swing = (uint8_t)clamp((int32_t)set.ms.swing + accel(EN_SELECT, e, 2, 4), 0, 100);
+            dirty();
+            int_text(set.ms.swing, t);
+            text_cat(t, "%");
+            app_say("SWING", t);
         } else {
             char t[8];
             set.ms.bpm = (uint8_t)clamp((int32_t)set.ms.bpm + accel(EN_SELECT, e, 2, 5), 60, 200);
@@ -843,12 +874,28 @@ static void input(void)
             int_text(r, t);
             text_cat(t, r == 1 ? " HIT" : " HITS");
             app_say("RETRIG", t);
-        } else {
-            set.ms.swing = (uint8_t)clamp((int32_t)set.ms.swing + accel(EN_ALGO, e, 2, 4), 0, 100);
-            dirty();
-            int_text(set.ms.swing, t);
-            text_cat(t, "%");
-            app_say("SWING", t);
+        } else {                         /* DRIVE: the master's compressor and warmth, one macro */
+            static int32_t pos = -1;
+            int32_t v;
+            int z;
+            if (pos < 0)
+                pos = pos_of_val(&DRIVE_KNOB, DRIVE);
+            pos = clamp(pos + accel(EN_ALGO, e, 3, 6), 0, pos_max(&DRIVE_KNOB));
+            v = val_of_pos(&DRIVE_KNOB, pos);
+            if (v != DRIVE) {
+                DRIVE = (uint8_t)v;
+                drive_apply(v);
+                if (ui.page == PG_FX)
+                    knobs_sync();
+                dirty();
+            }
+            z = zone_at(&DRIVE_KNOB, v);
+            if (z >= 0) {
+                app_say("DRIVE", DRIVE_KNOB.zone[z]);
+            } else {
+                int_text(v, t);
+                app_say("DRIVE", t);
+            }
         }
     }
     if ((e = plat_enc(EN_PRESET)) != 0) {
@@ -1383,8 +1430,16 @@ void app_frame(void)
             ui.redraw = 1;
         }
     }
-    if (set_dirty && now - dirty_at > 4000u)   /* saved a few seconds after the last change */
-        settings_save();
+    /* saved only while the sequencer is stopped (a second and a half after the last change): writing the flash stops
+     * its reads, and the render, which runs from it, would miss its blocks (dropouts) */
+    if (!ui.playing && now - dirty_at > 1500u) {
+        if (set_dirty)
+            settings_save();
+        if (users_dirty) {
+            users_dirty = 0;
+            plat_store_save(OBJ_USER, &users, sizeof users);
+        }
+    }
     if (ui.redraw) {
         ui.redraw = 0;
         draw();
@@ -1397,6 +1452,10 @@ void app_backup_flush(void)
 {
     if (set_dirty)
         settings_save();
+    if (users_dirty) {
+        users_dirty = 0;
+        plat_store_save(OBJ_USER, &users, sizeof users);
+    }
 }
 void app_backup_hold(int on) { (void)on; }
 void app_backup_restored(void)
@@ -1435,6 +1494,10 @@ int app_expect(const char *what, int *got)
         *got = ui.view;
     else if (!strcmp(what, "scene"))
         *got = set.ms.has_scene;
+    else if (!strcmp(what, "comp"))
+        *got = set.ms.fx[0];
+    else if (!strcmp(what, "warm"))
+        *got = set.ms.fx[1];
     else if (!strcmp(what, "asking"))
         *got = ui.ask_until != 0;
     else if (!strncmp(what, "sat", 3) && what[3] >= '1' && what[3] <= '4')

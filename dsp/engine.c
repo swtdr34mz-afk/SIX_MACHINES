@@ -42,6 +42,8 @@ typedef struct {
     float env, env_att, env_k, env_rise; /* ENV: its value, its attack step, its decay, rising */
     float lfo_sh, lfo_last;              /* LFO: the sample-and-hold value, the phase it was taken at */
     float mod[4];                        /* the modulation now, in macro units */
+    float mod_lfo[4], env_depth;         /* the LFO's part of it, the ENV's depth (+-64) */
+    int env_tgt;                         /* the macro the ENV moves */
     int sat_type;                        /* the insert: saturation, its tone, its mix */
     float sat_g, sat_mix, sat_makeup, sat_lp_a, sat_hp_a, sat_lp, sat_hp, crush_n, crush_s, sat_q;
     float gl, gr, rev, dly;              /* level x pan, the sends */
@@ -283,13 +285,17 @@ static void track_block(int t)
     }
     s->lfo_last = ph;
     for (k = 0; k < 4u; k++)
-        s->mod[k] = 0.0f;
+        s->mod_lfo[k] = 0.0f;
+    if (d_lfo != 0.0f)
+        s->mod_lfo[tgt_l] += d_lfo * w;
+    if (t == M_SNARE && build_on > 0.0f)  /* the build-up tunes the snare up as it rolls */
+        s->mod_lfo[0] += 30.0f * eng_build();
+    s->env_depth = d_env;
+    s->env_tgt = tgt_e;
+    for (k = 0; k < 4u; k++)
+        s->mod[k] = s->mod_lfo[k];
     if (d_env != 0.0f)
         s->mod[tgt_e] += d_env * s->env;
-    if (d_lfo != 0.0f)
-        s->mod[tgt_l] += d_lfo * w;
-    if (t == M_SNARE && build_on > 0.0f)  /* the build-up tunes the snare up as it rolls */
-        s->mod[0] += 30.0f * eng_build();
 }
 
 /* the track's insert: saturation (tape, tube, fold, crush) with its tone, mixed with the dry */
@@ -333,7 +339,19 @@ static void strike(int t, float vel, const uint8_t *lock)
             if (lock[k] != NO_LOCK)
                 s->locked = 1;
         }
-    s->env_rise = 1.0f;
+    /* the envelope starts at the hit: with a snap attack (2 ms or less) at its top at once, so the hit itself is
+     * already moved (a pitch drop on TUNE, a click on PUNCH); with a slower one it rises from zero */
+    if (s->env_att * 0.002f * ENG_SR >= 1.0f) {
+        s->env = 1.0f;
+        s->env_rise = 0.0f;
+    } else {
+        s->env = 0.0f;
+        s->env_rise = 1.0f;
+    }
+    for (k = 0; k < 4u; k++)
+        s->mod[k] = s->mod_lfo[k];
+    if (s->env_depth != 0.0f)
+        s->mod[s->env_tgt] += s->env_depth * s->env;
     retarget(t, 1);
     if (!was)
         s->gain = s->cur.f[0];

@@ -52,6 +52,13 @@ The same page button again goes back to SOUND. A bar under the rack shows the ei
 master's two on FX, PERFORM) with the one shown thick; on FX its name says 1/2 or 2/2. On the SOUND page a white mark on
 a knob's bar shows where its ENV and LFO move it now.
 
+### ENV
+
+ENV moves one of the machine's four macros (TARGET) at every hit: DEPTH says how far (up or down; in the middle, OFF,
+nothing happens), ATTACK how fast it gets there (SNAP: already on the hit), DECAY how fast it comes back. Examples:
+KICK, TARGET TUNE, DEPTH +MAX, DECAY SHORT: a harder pitch zap; SNARE, TARGET RATTLE, DEPTH +HALF, DECAY LONG: a
+rattle that opens at each hit; FM, TARGET MOD, DEPTH -HALF, ATTACK SWELL: a blip that sweeps into its ratio.
+
 ## Presets
 
 A preset is a machine's whole sound: its SOUND, SAT, ENV and LFO pages (the MIX page, the mixer, stays as it is).
@@ -111,8 +118,8 @@ from its sound to scene B; pad 13 jumps there while held. SAVE held 1 s forgets 
 | Black keys | The six machines: KICK, SNARE, TOMS, FM, HATS, CLAP. A key picks the machine; while the sequencer is stopped it also plays it. PERF mode: mutes |
 | White keys | The picked machine's steps (PERF mode: the pads) |
 | K1..K4 | The page's four knobs |
-| SELECT | Tempo (60 to 200 BPM); a step held: its condition |
-| ALGORITHM | Swing; a step held: its retrigs |
+| SELECT | Tempo (60 to 200 BPM); SEQ held: swing; a step held: its condition |
+| ALGORITHM | DRIVE: the master's compressor and warmth as one macro (OFF, GLUE, PUNCH, PUMP, CRUSH); a step held: its retrigs |
 | PRESET | The picked machine's presets (asks SAVE SOUND? when the sound was changed); a step held: its locks cleared |
 | HOME held 1 s | The machine's sound back to its preset |
 | HOME, SEL, ENV, LFO, EDIT, FX, GLO | The pages |
@@ -127,7 +134,7 @@ The bottom line shows the audio load (CPU %) and, should the sound ever break up
 rendered on both of the FM-1's cores (TOMS, FM, HATS and CLAP on the second); if the second core fails on a unit,
 everything runs on the first.
 
-Settings, patterns, pages and scene B save themselves a few seconds after the last change (mutes and pads are live).
+Settings, patterns, pages, scene B and the USER presets save themselves once the sequencer stops (writing the flash while it plays would make the sound drop out); mutes and pads are live.
 
 ## Building
 
