@@ -1,5 +1,5 @@
 # SIX MACHINES in the host simulator:
-#   X0X_FONTSET=terminus python3 fm1-base/tools/build.py . --host, then build/host/sixmachines_host tests/basic.txt build/host
+#   X0X_FONTSET=barlow python3 fm1-base/tools/build.py . --host, then build/host/sixmachines_host tests/basic.txt build/host
 splashshot splash.png
 wait 500
 shot intro.png

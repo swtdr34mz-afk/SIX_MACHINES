@@ -16,7 +16,7 @@ permissions:
   pages: write
 
 env:
-  X0X_FONTSET: terminus          # the screens' pixel type (fm1-base's Terminus set)
+  X0X_FONTSET: barlow            # the screens' type: Barlow, smooth (fm1-base's anti-aliased set)
 
 jobs:
   build:

@@ -990,81 +990,214 @@ static void ctext(int32_t cx, int32_t y, const felucca_font_t *f, const char *s,
     cv_text(cx - text_w(f, s) / 2, y, f, s, c);
 }
 
-/* the rack: six modules; the picked one framed in its colour, each flashing with its hits; muted ones crossed out */
+/* the look: dark panels on black, rounded corners, the machines' colours for what is theirs, white for where we are */
+#define C_PANEL RGB(20, 20, 26)          /* a module's, a cell's face */
+#define C_EDGE RGB(44, 44, 54)           /* its edge */
+#define C_MUTE RGB(60, 60, 68)
+
+/* smooth drawing: the screen is 240 x 240, so edges are drawn with their coverage, each edge pixel a blend of the
+ * colour into what is under it (anti-aliased): round corners, rings and lines without steps */
+static void aa_px(int32_t x, int32_t y, uint16_t c, float a)
+{
+    uint32_t i, bg, r, g, b, k;
+    y += cv_oy;
+    if (a <= 0.004f || (uint32_t)x >= cv_w || y < cv_y0 || y >= cv_y1)
+        return;
+    i = (uint32_t)y * cv_w + (uint32_t)x;
+    if (a >= 0.996f) {
+        cv_px[i] = swap16(c);
+        return;
+    }
+    bg = swap16(cv_px[i]);
+    k = (uint32_t)(a * 256.0f);
+    r = (((bg >> 11) & 31u) * (256u - k) + ((c >> 11) & 31u) * k) >> 8;
+    g = (((bg >> 5) & 63u) * (256u - k) + ((c >> 5) & 63u) * k) >> 8;
+    b = ((bg & 31u) * (256u - k) + (c & 31u) * k) >> 8;
+    cv_px[i] = swap16((uint16_t)(r << 11 | g << 5 | b));
+}
+static inline float cov(float d) { return d >= 0.5f ? 1.0f : d <= -0.5f ? 0.0f : d + 0.5f; }   /* signed distance -> coverage */
+
+/* a rounded rectangle, its corners of radius r smooth */
+static void rrect_r(int32_t x, int32_t y, int32_t w, int32_t h, int32_t r, uint16_t c)
+{
+    int32_t i, j;
+    cv_rect(x + r, y, w - 2 * r, h, c);
+    cv_rect(x, y + r, r, h - 2 * r, c);
+    cv_rect(x + w - r, y + r, r, h - 2 * r, c);
+    for (j = 0; j < r; j++)
+        for (i = 0; i < r; i++) {
+            float dx = (float)r - ((float)i + 0.5f), dy = (float)r - ((float)j + 0.5f);
+            float a = cov((float)r - fm_sqrtf(dx * dx + dy * dy));
+            aa_px(x + i, y + j, c, a);
+            aa_px(x + w - 1 - i, y + j, c, a);
+            aa_px(x + i, y + h - 1 - j, c, a);
+            aa_px(x + w - 1 - i, y + h - 1 - j, c, a);
+        }
+}
+static void rrect(int32_t x, int32_t y, int32_t w, int32_t h, uint16_t c) { rrect_r(x, y, w, h, 4, c); }
+static void rframe(int32_t x, int32_t y, int32_t w, int32_t h, uint16_t edge, uint16_t face)
+{
+    rrect_r(x, y, w, h, 4, edge);
+    rrect_r(x + 1, y + 1, w - 2, h - 2, 3, face);
+}
+
+/* a smooth disc */
+static void disc(float cx, float cy, float r, uint16_t c)
+{
+    int32_t x, y;
+    for (y = (int32_t)(cy - r - 1.0f); y <= (int32_t)(cy + r + 1.0f); y++)
+        for (x = (int32_t)(cx - r - 1.0f); x <= (int32_t)(cx + r + 1.0f); x++) {
+            float dx = (float)x + 0.5f - cx, dy = (float)y + 0.5f - cy;
+            aa_px(x, y, c, cov(r - fm_sqrtf(dx * dx + dy * dy)));
+        }
+}
+
+static float atan2_deg(float y, float x)  /* degrees, -180..180 (a polynomial: a tenth of a degree) */
+{
+    float ax = fm_fabsf(x), ay = fm_fabsf(y), mn = ax < ay ? ax : ay, mx = ax < ay ? ay : ax, a, s, r;
+    if (mx < 1e-9f)
+        return 0.0f;
+    a = mn / mx;
+    s = a * a;
+    r = ((-0.0464964749f * s + 0.15931422f) * s - 0.327622764f) * s * a + a;
+    if (ay > ax)
+        r = 1.5707963f - r;
+    if (x < 0.0f)
+        r = FM_PI - r;
+    if (y < 0.0f)
+        r = -r;
+    return r * (180.0f / FM_PI);
+}
+
+/* the battery, on every page: three bars (one: amber, none: red, blinking), a bolt on USB power; none when not read */
+static void draw_battery(int32_t x, int32_t y, uint32_t now)
+{
+    int b = plat_battery();
+    uint16_t c = b >= 2 ? C_WHITE : b == 1 ? RGB(255, 176, 40) : RGB(255, 60, 50);
+    int32_t i;
+    if (b < 0)
+        return;
+    cv_rect(x, y, 19, 10, C_GRAY);
+    cv_rect(x + 1, y + 1, 17, 8, C_BLACK);
+    cv_rect(x + 19, y + 3, 2, 4, C_GRAY);
+    if (b == 4) {                        /* USB power: a bolt */
+        static const uint8_t BOLT[6][2] = {{9, 2}, {8, 3}, {7, 4}, {8, 5}, {10, 5}, {9, 6}};
+        cv_rect(x + 7, y + 4, 6, 1, RGB(90, 220, 255));
+        for (i = 0; i < 6; i++)
+            cv_rect(x + BOLT[i][0], y + BOLT[i][1], 2, 1, RGB(90, 220, 255));
+        return;
+    }
+    if (b == 0 && (now / 500u) & 1u)     /* empty: it blinks */
+        return;
+    for (i = 0; i < (b ? b : 1); i++)
+        cv_rect(x + 2 + i * 5, y + 2, 4, 6, c);
+}
+
+/* the rack: six modules; the picked one lit in its colour, each with a LED that flashes with its hits; muted ones dark
+ * and struck through */
 static void draw_rack(int32_t y)
 {
     uint32_t i;
     for (i = 0; i < NMACHINES; i++) {
         const machine_t *m = &MACHINES[i];
-        int32_t x = 3 + (int32_t)i * 39;
+        int32_t x = 2 + (int32_t)i * 39;
         float env = eng_env((int)i);
         int sel = i == set.sel, mute = ui.muted >> i & 1u;
-        cv_rect(x, y, 37, 24, sel ? m->rgb : env > 0.25f ? dim_of(m->rgb) : C_LINE);
-        cv_rect(x + (sel ? 2 : 1), y + (sel ? 2 : 1), sel ? 33 : 35, sel ? 20 : 22, C_BLACK);
-        if (!mute)
-            cv_rect(x + 4, y + 17, (int32_t)(29.0f * fm_clampf(env * 1.4f, 0.0f, 1.0f)), 3, m->rgb);
-        ctext(x + 18, y + 4, &FONT_XS, m->name, mute ? C_DIM : sel ? C_WHITE : C_GRAY);
+        uint16_t led = mute ? C_MUTE : env > 0.25f ? (sel ? C_WHITE : m->rgb) : sel ? dim_of(C_WHITE) : dim_of(m->rgb);
+        if (sel)
+            rframe(x, y, 37, 22, m->rgb, m->rgb);
+        else
+            rframe(x, y, 37, 22, C_EDGE, C_PANEL);
+        cv_rect(x + 3, y + 3, 4, 4, led);   /* its LED */
+        ctext(x + 19, y + 8, &FONT_XS, m->name, mute ? C_MUTE : sel ? C_BLACK : C_GRAY);
         if (mute)
-            cv_line(x + 4, y + 19, x + 32, y + 4, C_GRAY);
+            cv_rect(x + 4, y + 15, 29, 1, C_MUTE);
     }
 }
 
-/* one knob: its name, a bar 0..127 with the sweetspots as ticks (a bipolar one from the middle), the value, the zone
- * it is on (lit) or near (dim); the modulation on a SOUND macro as a white mark; a p-lock in white */
+/* one knob: a ring of 270 degrees with its sweetspots as dots, the value as an arc in the page's colour (a bipolar one
+ * from the top), a pointer, its name above and the zone it is on (lit) or near (dim) below; the modulation on a SOUND
+ * macro as a white dot on the ring; a p-lock in white */
+static void ring_pt(float cx, float cy, float r, float v, float *x, float *y)   /* v 0..127 on the ring */
+{
+    float a = (135.0f + v * (270.0f / 127.0f)) * (FM_PI / 180.0f);
+    *x = cx + r * fm_cosf(a);
+    *y = cy + r * fm_sinf(a);
+}
 static void draw_knob(int k, int32_t x, int32_t y, uint32_t now, uint16_t col)
 {
     const macro_t *mc = page_knob(k);
-    int32_t v = knob_val(k), w = 54, z = zone_at(mc, v), zn = zone_near(mc, v), fill = (v * (w - 2)) / 127;
-    uint32_t i;
+    int32_t v = knob_val(k), w = 56, z = zone_at(mc, v), zn = zone_near(mc, v), px, py;
+    float cx = (float)(x + w / 2), cy = (float)(y + 31), tx, ty, vx, vy, dlx, dly, len2;
     int hot = ui.knob_at[k] && now - ui.knob_at[k] < 600u, lock = locking() && TR.lock[ui.held][k] != NO_LOCK;
     int bip = mc->nzones == 5 && mc->centre[2] == 64 && mc->centre[0] == 4;
+    float from = bip ? (float)(v < 64 ? v : 64) : 0.0f, to = bip ? (float)(v < 64 ? 64 : v) : (float)v;
+    uint16_t arc = lock ? C_WHITE : z >= 0 ? col : dim_of(col) | 0x2104u, hand = lock || hot ? C_WHITE : C_GRAY;
+    uint32_t i;
     char t[8];
-    cv_text(x, y, &FONT_XS, mc->name, lock ? C_WHITE : hot ? C_WHITE : C_GRAY);
-    cv_rect(x, y + 14, w, 8, C_LINE);
-    if (bip) {
-        int32_t c = x + w / 2, f = ((v - 64) * (w / 2 - 1)) / 63;
-        if (f >= 0)
-            cv_rect(c, y + 15, f, 6, z >= 0 ? col : C_HI);
-        else
-            cv_rect(c + f, y + 15, -f, 6, z >= 0 ? col : C_HI);
-    } else {
-        cv_rect(x + 1, y + 15, fill, 6, lock ? C_WHITE : z >= 0 ? col : C_HI);
+    ctext((int32_t)cx, y, &FONT_XS, mc->name, lock || hot ? C_WHITE : C_GRAY);
+    /* the ring (3 px), the value's arc on it, and the pointer from the middle: one pass over the knob's square */
+    ring_pt(cx, cy, 8.5f, (float)v, &tx, &ty);
+    dlx = tx - cx;
+    dly = ty - cy;
+    len2 = dlx * dlx + dly * dly;
+    for (py = (int32_t)cy - 16; py <= (int32_t)cy + 16; py++)
+        for (px = (int32_t)cx - 16; px <= (int32_t)cx + 16; px++) {
+            float dx = (float)px + 0.5f - cx, dy = (float)py + 0.5f - cy, d = fm_sqrtf(dx * dx + dy * dy);
+            float ring = cov(14.0f - d) * cov(d - 11.0f), h, u;
+            if (ring > 0.0f) {
+                u = atan2_deg(dy, dx) - 135.0f;
+                while (u < 0.0f)
+                    u += 360.0f;
+                if (u <= 271.0f) {        /* (the gap at the bottom stays open) */
+                    float vv = u * (127.0f / 270.0f);
+                    aa_px(px, py, vv >= from - 0.5f && vv <= to + 0.5f ? arc : C_EDGE, ring * cov((271.0f - u) * 0.5f));
+                }
+            }
+            h = (dx * dlx + dy * dly) / len2;     /* the pointer: a line 2 px wide, round at its tip */
+            h = h < 0.0f ? 0.0f : h > 1.0f ? 1.0f : h;
+            {
+                float ex = dx - h * dlx, ey = dy - h * dly;
+                aa_px(px, py, hand, cov(1.1f - fm_sqrtf(ex * ex + ey * ey)));
+            }
+        }
+    for (i = 0; i < mc->nzones; i++) {   /* the sweetspots: dots outside the ring, the one it is on white */
+        ring_pt(cx, cy, 17.5f, (float)mc->centre[i], &vx, &vy);
+        disc(vx, vy, (int)i == z ? 1.6f : 1.1f, (int)i == z ? C_WHITE : C_GRAY);
     }
-    for (i = 0; i < mc->nzones; i++) {   /* the sweetspots */
-        int32_t tx = x + 1 + (mc->centre[i] * (w - 3)) / 127;
-        cv_rect(tx, y + 11, 1, 3, (int)i == z ? col : C_GRAY);
-    }
-    if (ui.page == PG_SOUND) {           /* the modulation now */
+    disc(cx, cy, 2.2f, hand);
+    if (ui.page == PG_SOUND) {           /* the modulation now: a white dot on the ring */
         int8_t md[4];
-        int32_t mv;
         eng_mod(set.sel, md);
         if (md[k]) {
-            mv = clamp(v + md[k], 0, 127);
-            cv_rect(x + 1 + (mv * (w - 3)) / 127, y + 13, 2, 10, C_WHITE);
+            ring_pt(cx, cy, 12.5f, (float)clamp(v + md[k], 0, 127), &vx, &vy);
+            disc(vx, vy, 2.0f, C_WHITE);
         }
     }
     if (hot && z < 0) {                  /* turning between zones: the value */
         int_text(bip ? v - 64 : v, t);
-        ctext(x + w / 2, y + 26, &FONT_XS, t, C_HI);
+        ctext((int32_t)cx, y + 47, &FONT_XS, t, C_HI);
     } else {
-        ctext(x + w / 2, y + 26, &FONT_XS, zone_name(mc, z >= 0 ? z : zn), z >= 0 ? C_WHITE : C_DIM);
+        ctext((int32_t)cx, y + 47, &FONT_XS, zone_name(mc, z >= 0 ? z : zn), z >= 0 ? C_WHITE : C_DIM);
     }
 }
 
-/* where we are: the eight pages as a bar under the rack, the machine's five, the master's two (FX), PERFORM; the page
- * shown thick in its colour, its button's other page brighter than the rest */
+/* where we are: the eight pages as small pills under the rack, the machine's five, the master's two (FX), PERFORM; the
+ * page shown long and lit in its colour, its button's other page brighter than the rest */
 static void draw_page_bar(int32_t y)
 {
     static const uint8_t GROUP[NPAGES] = {0, 0, 0, 0, 0, 1, 1, 2};
-    int32_t x = 4, w = 25;
+    int32_t x = 6, w;
     uint32_t p;
     for (p = 0; p < NPAGES; p++) {
         int cur = p == ui.page, sib = !cur && p >= PG_FX && p <= PG_FX2 && ui.page >= PG_FX && ui.page <= PG_FX2;
-        uint16_t c = cur ? (p < PG_FX ? MC.rgb : C_HI) : sib ? C_GRAY : C_DIM;
+        uint16_t c = cur ? (p < PG_FX ? MC.rgb : C_HI) : sib ? C_GRAY : C_EDGE;
         if (p && GROUP[p] != GROUP[p - 1])
-            x += 8;
-        cv_rect(x, cur ? y : y + 1, w, cur ? 4 : 2, c);
-        x += w + 2;
+            x += 10;
+        w = cur ? 34 : 18;
+        cv_rect(x + 1, y, w - 2, 3, c);
+        cv_rect(x, y + 1, w, 1, c);
+        x += w + 4;
     }
 }
 
@@ -1081,12 +1214,13 @@ static void draw_ask(void)
                 break;
         text_cat(t, preset_name(set.sel, NPRESETS + u));
     }
-    ctext(120, 38, &FONT_XS, MC.name, MC.rgb);
-    ctext(120, 50, &FONT_B, "SAVE SOUND?", C_WHITE);
-    cv_text(20, 72, &FONT_XS, "SAVE", C_HI);
-    cv_text(60, 72, &FONT_XS, t, C_GRAY);
-    cv_text(20, 86, &FONT_XS, "PRESET", C_HI);
-    cv_text(66, 86, &FONT_XS, "AGAIN: DISCARD", C_GRAY);
+    rframe(14, 34, 212, 70, MC.rgb, C_PANEL);
+    ctext(120, 40, &FONT_XS, MC.name, MC.rgb);
+    ctext(120, 52, &FONT_B, "SAVE SOUND?", C_WHITE);
+    cv_text(26, 74, &FONT_XS, "SAVE", C_HI);
+    cv_text(70, 74, &FONT_XS, t, C_GRAY);
+    cv_text(26, 87, &FONT_XS, "PRESET", C_HI);
+    cv_text(70, 87, &FONT_XS, "AGAIN: DISCARD", C_GRAY);
 }
 
 static void draw_page(uint32_t now)      /* the page's knobs, and a line under them */
@@ -1095,72 +1229,69 @@ static void draw_page(uint32_t now)      /* the page's knobs, and a line under t
     char t[32];
     uint16_t col = ui.page >= PG_FX ? C_HI : MC.rgb;
     for (i = 0; i < 4u; i++)
-        draw_knob((int)i, 4 + (int32_t)i * 59, 38, now, col);
+        draw_knob((int)i, 2 + (int32_t)i * 59, 33, now, col);
+    cv_rect(4, 94, 232, 1, C_EDGE);
     if (ui.held >= 0) {                  /* a step held: its number, condition, retrigs */
         int32_t r = TR.retrig[ui.held] < 2u ? 1 : TR.retrig[ui.held];
         t[0] = 0;
         text_cat(t, "STEP ");
         int_text(ui.held + 1, t + 5);
-        cv_text(4, 82, &FONT_XS, t, C_WHITE);
-        cv_text(60, 82, &FONT_XS, COND_NAME[TR.cond[ui.held]], C_HI);
+        cv_text(4, 97, &FONT_XS, t, C_WHITE);
+        cv_text(60, 97, &FONT_XS, COND_NAME[TR.cond[ui.held]], C_HI);
         t[0] = 'x';
         int_text(r, t + 1);
-        cv_text(130, 82, &FONT_XS, t, C_HI);
-        cv_text(236 - text_w(&FONT_XS, "LOCKS"), 82, &FONT_XS, "LOCKS", ui.page == PG_SOUND ? C_AMB : C_DIM);
+        cv_text(130, 97, &FONT_XS, t, C_HI);
+        cv_text(236 - text_w(&FONT_XS, "LOCKS"), 97, &FONT_XS, "LOCKS", ui.page == PG_SOUND ? C_AMB : C_DIM);
         return;
     }
     if (ui.page == PG_SOUND) {
-        int32_t x;
-        cv_text(4, 82, &FONT_XS, "PRESET", C_DIM);
-        x = cv_text(48, 82, &FONT_XS, preset_name(set.sel, TR.preset), C_AMB);
+        int32_t x = cv_text(4, 97, &FONT_XS, preset_name(set.sel, TR.preset), C_AMB);
         if (sound_edited(set.sel))
-            cv_text(x + 3, 82, &FONT_XS, "*", C_WHITE);
+            cv_text(x + 3, 97, &FONT_XS, "*", C_WHITE);
     } else {
-        int32_t px = cv_text(4, 82, &FONT_XS, PAGE_NAME[ui.page], C_HI);
+        int32_t px = cv_text(4, 97, &FONT_XS, PAGE_NAME[ui.page], C_HI);
         if (ui.page == PG_FX || ui.page == PG_FX2)   /* FX: its two pages */
-            cv_text(px + 6, 82, &FONT_XS, ui.page == PG_FX ? "1/2" : "2/2", C_GRAY);
+            cv_text(px + 6, 97, &FONT_XS, ui.page == PG_FX ? "1/2" : "2/2", C_GRAY);
         if (ui.page < PG_FX)
-            cv_text(10 + text_w(&FONT_XS, PAGE_NAME[ui.page]), 82, &FONT_XS, MC.name, MC.rgb);
+            cv_text(10 + text_w(&FONT_XS, PAGE_NAME[ui.page]), 97, &FONT_XS, MC.name, MC.rgb);
         if (ui.perf) {                   /* the live FX keys, lit while held */
-            int32_t x = 60;
+            int32_t x = 64;
             for (i = P_GATE; i < NPADS; i++) {
                 int on = ui.pads >> i & 1u;
                 int32_t w = text_w(&FONT_XS, PAD_SHORT[i]) + 6;
-                cv_rect(x, 80, w, 14, on ? C_HI : C_LINE);
-                if (!on)
-                    cv_rect(x + 1, 81, w - 2, 12, C_BLACK);
-                cv_text(x + 3, 81, &FONT_XS, PAD_SHORT[i], on ? C_BLACK : C_GRAY);
+                rframe(x, 95, w, 14, on ? C_HI : C_EDGE, on ? C_HI : C_PANEL);
+                cv_text(x + 3, 97, &FONT_XS, PAD_SHORT[i], on ? C_BLACK : C_GRAY);
                 x += w + 3;
             }
             return;
         }
         if (ui.page == PG_GLO && set.ms.has_scene)
-            cv_text(100, 82, &FONT_XS, "SCENE B SET", C_AMB);
+            cv_text(100, 97, &FONT_XS, "SCENE B SET", C_AMB);
     }
-    t[0] = 0;
-    text_cat(t, "SWING ");
-    int_text(set.ms.swing, t + 6);
-    text_cat(t, "%");
-    cv_text(236 - text_w(&FONT_XS, t), 82, &FONT_XS, t, C_AMB);
+    if (set.ms.swing) {
+        t[0] = 0;
+        text_cat(t, "SWING ");
+        int_text(set.ms.swing, t + 6);
+        text_cat(t, "%");
+        cv_text(236 - text_w(&FONT_XS, t), 97, &FONT_XS, t, C_DIM);
+    }
 }
 
-static void draw_steps(int32_t s)        /* the page of steps shown, in the machine's colour; the others' hits as marks */
+/* the page of steps shown: dark cells, the machine's colour where it plays (bright: accent), the beats a little apart;
+ * the step under way framed white; a lock, a condition, retrigs as marks; the other machines' hits as dots */
+static void draw_steps(int32_t s)
 {
     uint32_t i, j;
     for (i = 0; i < 16u; i++) {
-        int32_t st = (int32_t)i + 16 * ui.view, x = 6 + (int32_t)(i % 8u) * 29, y = 10 + (int32_t)(i / 8u) * 36;
-        int32_t mx = x + 3;
+        int32_t st = (int32_t)i + 16 * ui.view, x = 4 + (int32_t)(i % 8u) * 28 + (int32_t)(i % 8u / 4u) * 6;
+        int32_t y = 6 + (int32_t)(i / 8u) * 37, mx = x + 4;
         int on = TR.steps >> st & 1u, acc = on && (TR.acc >> st & 1u);
-        uint16_t c = acc ? MC.rgb : on ? dim_of(MC.rgb) : C_LINE;
-        if (st >= len_steps()) {
-            cv_rect(x, y, 25, 28, C_BLACK);
+        uint16_t face = acc ? MC.rgb : on ? dim_of(MC.rgb) | 0x0841u : C_PANEL;
+        if (st >= len_steps())
             continue;
-        }
-        cv_rect(x, y, 25, 28, st == ui.held ? C_WHITE : c);
-        if (!on || st == ui.held)
-            cv_rect(x + 1, y + 1, 23, 26, on ? c : C_BLACK);
-        if (acc)
-            cv_rect(x + 4, y + 4, 17, 3, C_WHITE);
+        rframe(x, y, 26, 30, st == s || st == ui.held ? C_WHITE : on ? face : C_EDGE, face);
+        if (st == s || st == ui.held)
+            rrect(x + 1, y + 1, 24, 28, face);
         if (on) {                        /* a lock, a condition, retrigs */
             uint32_t k;
             int lk = 0;
@@ -1168,21 +1299,17 @@ static void draw_steps(int32_t s)        /* the page of steps shown, in the mach
                 if (TR.lock[st][k] != NO_LOCK)
                     lk = 1;
             if (lk)
-                cv_rect(x + 19, y + 10, 4, 4, C_WHITE);
+                cv_rect(x + 19, y + 4, 4, 4, C_WHITE);
             if (TR.cond[st])
-                cv_rect(x + 3, y + 10, 4, 4, C_BLACK);
+                cv_rect(x + 4, y + 4, 4, 4, C_BLACK);
             for (k = 1; k < TR.retrig[st]; k++)
-                cv_rect(x + 3 + (int32_t)k * 4, y + 16, 2, 3, C_WHITE);
+                cv_rect(x + 3 + (int32_t)k * 4, y + 13, 2, 4, acc ? C_BLACK : C_WHITE);
         }
         for (j = 0; j < NMACHINES; j++)  /* the others */
             if (j != set.sel && (set.tr[j].steps >> st & 1u)) {
-                cv_rect(mx, y + 22, 3, 3, (ui.muted >> j & 1u) ? C_DIM : MACHINES[j].rgb);
-                mx += 4;
+                cv_rect(mx, y + 24, 2, 2, (ui.muted >> j & 1u) ? C_MUTE : MACHINES[j].rgb);
+                mx += 3;
             }
-        if (st == s)
-            cv_rect(x, y + 30, 25, 3, C_WHITE);
-        else if (i % 4u == 0)
-            cv_rect(x, y + 30, 3, 3, C_DIM);
     }
 }
 
@@ -1191,80 +1318,79 @@ static void draw_pads(void)              /* PERF mode: the sixteen pads, held on
     uint32_t i;
     float b = eng_build();
     for (i = 0; i < 16u; i++) {
-        int32_t x = 6 + (int32_t)(i % 8u) * 29, y = 10 + (int32_t)(i / 8u) * 36;
+        int32_t x = 4 + (int32_t)(i % 8u) * 28 + (int32_t)(i % 8u / 4u) * 6, y = 6 + (int32_t)(i / 8u) * 37;
         int on = ui.pads >> i & 1u;
-        cv_rect(x, y, 25, 28, on ? C_HI : C_LINE);
-        if (!on)
-            cv_rect(x + 1, y + 1, 23, 26, C_BLACK);
-        ctext(x + 13, y + 9, &FONT_XS, PAD_SHORT[i], on ? C_BLACK : C_GRAY);
+        rframe(x, y, 26, 30, on ? C_HI : C_EDGE, on ? C_HI : C_PANEL);
+        ctext(x + 13, y + 10, &FONT_XS, PAD_SHORT[i], on ? C_BLACK : C_GRAY);
         if (i == P_BUILD && b > 0.0f)
-            cv_rect(x + 2, y + 24, (int32_t)(21.0f * b), 2, on ? C_BLACK : C_HI);
+            cv_rect(x + 3, y + 25, (int32_t)(20.0f * b), 2, on ? C_BLACK : C_HI);
     }
 }
 
 static void draw(void)
 {
     uint32_t now = plat_ms();
-    int32_t s = eng_step();
+    int32_t s = eng_step(), i;
     char t[24];
-    /* header: the name, or a message; the tempo and the transport */
+    /* header: the name, or a message; the tempo, the transport, the battery (always) */
     cv_begin(240, 30, C_BLACK);
     if (now < ui.msg_until) {
-        int32_t x = cv_text(8, 6, &FONT_B, ui.msg[0], C_WHITE);
-        cv_text(x + 8, 6, &FONT_B, ui.msg[1], C_HI);
+        int32_t x = cv_text(6, 7, &FONT_B, ui.msg[0], C_WHITE);
+        if (x < 150)
+            cv_text(x + 6, 7, &FONT_B, ui.msg[1], C_HI);
     } else {
-        int32_t i;
-        cv_text(8, 6, &FONT_B, "SIX MACHINES", MACHINES[M_KICK].rgb);
-        int_text(set.ms.bpm, t);
-        text_cat(t, " BPM");
-        cv_text(200 - text_w(&FONT_XS, t), 10, &FONT_XS, t, C_AMB);
-        if (ui.playing)
-            for (i = 0; i < 6; i++)
-                cv_rect(214 + i, 9 + i, 1, 12 - 2 * i, C_HI);
-        else
-            cv_rect(213, 9, 10, 10, C_DIM);
+        int32_t x = cv_text(6, 7, &FONT_B, "SIX", MACHINES[M_KICK].rgb);
+        cv_text(x + 5, 7, &FONT_B, "MACHINES", C_WHITE);
     }
-    cv_rect(0, 29, 240, 1, C_LINE);
+    cv_rect(150, 4, 90, 22, C_BLACK);    /* (the status side stays clear) */
+    int_text(set.ms.bpm, t);
+    i = cv_text(196 - text_w(&FONT_B, t) - text_w(&FONT_XS, "BPM") - 3, 7, &FONT_B, t, C_WHITE);
+    cv_text(i + 3, 11, &FONT_XS, "BPM", C_DIM);
+    if (ui.playing)                      /* a triangle: playing; a square: stopped */
+        for (i = 0; i < 5; i++)
+            cv_rect(203 + i, 10 + i, 1, 11 - 2 * i, MACHINES[M_HATS].rgb);
+    else
+        cv_rect(203, 11, 8, 8, C_DIM);
+    draw_battery(216, 10, now);
+    cv_rect(0, 29, 240, 1, C_EDGE);
     cv_blit(0, 0);
-    /* the rack, and the page's knobs (or a sweetspot just reached, big) */
+    /* the rack, the page bar, and the page's knobs (or a sweetspot just reached, big) */
     cv_begin(240, 110, C_BLACK);
-    draw_rack(4);
-    draw_page_bar(30);
+    draw_rack(3);
+    draw_page_bar(28);
     if (ui.ask_until) {
         draw_ask();
     } else if (now < ui.zone_until && ui.zone_k >= 0) {
         const macro_t *mc = page_knob(ui.zone_k);
         uint16_t col = ui.page >= PG_FX ? C_HI : MC.rgb;
-        ctext(120, 38, &FONT_XS, mc->name, C_GRAY);
-        ctext(120, 52, &APP_BIG_FONT, zone_name(mc, ui.zone_z), col);
-        cv_rect(60, 94, 120, 2, col);
+        ctext(120, 40, &FONT_XS, mc->name, C_GRAY);
+        ctext(120, 54, &APP_BIG_FONT, zone_name(mc, ui.zone_z), col);
+        cv_rect(70, 93, 100, 2, col);
     } else {
         draw_page(now);
     }
     cv_blit(0, 30);
-    /* the steps, or the pads */
+    /* the steps, or the pads; a status line */
     cv_begin(240, 100, C_BLACK);
-    cv_rect(0, 0, 240, 1, C_LINE);
     if (ui.perf)
         draw_pads();
     else
         draw_steps(s);
-    /* the audio load and dropouts; the steps' page; the machine */
     t[0] = 0;
     text_cat(t, "CPU ");
     int_text((int32_t)plat_cpu_pct(), t + 4);
     text_cat(t, "%");
     {
-        int32_t x = cv_text(6, 84, &FONT_XS, t, plat_cpu_pct() > 80u ? C_WHITE : C_DIM);
+        int32_t x = cv_text(6, 85, &FONT_XS, t, plat_cpu_pct() > 80u ? C_WHITE : C_DIM);
         if (plat_xruns()) {
             char d[16] = "DROPS ";
             int_text((int32_t)plat_xruns(), d + 6);
-            x = cv_text(x + 8, 84, &FONT_XS, d, C_WHITE);
+            x = cv_text(x + 8, 85, &FONT_XS, d, C_WHITE);
         }
         if (set.ms.length == 32u && !ui.perf)
-            cv_text(x + 10, 84, &FONT_XS, ui.view ? "17-32" : "1-16", C_AMB);
+            cv_text(x + 10, 85, &FONT_XS, ui.view ? "17-32" : "1-16", C_AMB);
     }
-    cv_text(234 - text_w(&FONT_XS, ui.perf ? "PADS" : MC.name), 84, &FONT_XS, ui.perf ? "PADS" : MC.name,
+    cv_text(234 - text_w(&FONT_XS, ui.perf ? "PADS" : MC.name), 85, &FONT_XS, ui.perf ? "PADS" : MC.name,
             ui.perf ? C_HI : MC.rgb);
     cv_blit(0, 140);
 }
@@ -1423,7 +1549,8 @@ void app_frame(void)
         ui.redraw = 1;
     }
     if (now - ui.load_at >= 500u) {
-        uint32_t l = plat_cpu_pct() | plat_xruns() << 8;
+        uint32_t l = plat_cpu_pct() | plat_xruns() << 8 | (uint32_t)(plat_battery() + 1) << 28
+                     | (plat_battery() == 0 ? (now / 500u & 1u) << 27 : 0u);   /* (the battery, its blink) */
         ui.load_at = now;
         if (l != ui.load_shown) {
             ui.load_shown = l;
