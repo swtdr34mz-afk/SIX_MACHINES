@@ -1072,7 +1072,11 @@ static float atan2_deg(float y, float x)  /* degrees, -180..180 (a polynomial: a
 /* the battery, on every page: three bars (one: amber, none: red, blinking), a bolt on USB power; none when not read */
 static void draw_battery(int32_t x, int32_t y, uint32_t now)
 {
+#ifdef __EMSCRIPTEN__
+    int b = 3;                           /* the browser has no battery: shown full (as the simulator), so it is seen */
+#else
     int b = plat_battery();
+#endif
     uint16_t c = b >= 2 ? C_WHITE : b == 1 ? RGB(255, 176, 40) : RGB(255, 60, 50);
     int32_t i;
     if (b < 0)
